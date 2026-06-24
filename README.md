@@ -1,4 +1,4 @@
-# Vamo
+# Workout
 
 PWA mobile-first para acompanhamento pessoal de musculação e corrida.
 

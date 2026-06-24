@@ -144,10 +144,19 @@ const workoutPlan = {
   },
 };
 
+const exerciseCatalog = Array.from(
+  new Map(
+    Object.values(workoutPlan)
+      .flatMap((plan) => plan.exercises)
+      .map((exercise) => [exercise.name, exercise]),
+  ).values(),
+).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
+
 const state = {
   view: "today",
   selectedDate: localISO(new Date()),
   store: loadStore(),
+  builder: null,
 };
 
 const app = document.querySelector("#app");
@@ -176,6 +185,8 @@ function defaultStore() {
   const seed = {
     version: 1,
     sessions: {},
+    customPlans: [],
+    datePlanOverrides: {},
   };
 
   const tuesday = workoutPlan[2];
@@ -199,6 +210,7 @@ function defaultStore() {
 
   seed.sessions["2026-06-23"] = {
     dayId: 2,
+    planId: "base-2",
     exerciseLogs,
     cardio: { duration: "12", distance: "1400" },
     notes: "Todos os exercícios realizados ficaram dentro da faixa indicada. Crunch na polia não realizado.",
@@ -211,7 +223,15 @@ function defaultStore() {
 function loadStore() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) return JSON.parse(saved);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      parsed.customPlans ??= [];
+      parsed.datePlanOverrides ??= {};
+      Object.entries(parsed.sessions ?? {}).forEach(([dateISO, session]) => {
+        session.planId ??= `base-${parseISO(dateISO).getDay()}`;
+      });
+      return parsed;
+    }
   } catch (error) {
     console.warn("Não foi possível ler os registros salvos.", error);
   }
@@ -229,26 +249,45 @@ function persist() {
 }
 
 function getPlanForDate(dateISO = state.selectedDate) {
-  return workoutPlan[parseISO(dateISO).getDay()];
+  const customId = state.store.datePlanOverrides?.[dateISO];
+  const customPlan = state.store.customPlans?.find((plan) => plan.id === customId);
+  if (customPlan) return customPlan;
+  const day = parseISO(dateISO).getDay();
+  return { ...workoutPlan[day], id: `base-${day}`, isBase: true };
+}
+
+function getPlanForSession(dateISO, session) {
+  if (session?.planId?.startsWith("custom-")) {
+    const customPlan = state.store.customPlans?.find((plan) => plan.id === session.planId);
+    if (customPlan) return customPlan;
+  }
+  const day = parseISO(dateISO).getDay();
+  return { ...workoutPlan[day], id: `base-${day}`, isBase: true };
 }
 
 function makeBlankSession(dateISO) {
   const plan = getPlanForDate(dateISO);
   return {
     dayId: parseISO(dateISO).getDay(),
+    planId: plan.id,
     exerciseLogs: Object.fromEntries(
       plan.exercises.map((exercise) => [
         exercise.id,
         Array.from({ length: exercise.sets }, () => ({ load: "", reps: "", done: false })),
       ]),
     ),
-    cardio: { duration: "12", distance: "" },
+    cardio: { duration: String(plan.cardio.duration ?? 12), distance: "" },
     notes: "",
     completedAt: null,
   };
 }
 
 function getSession(dateISO = state.selectedDate, create = true) {
+  const currentPlan = getPlanForDate(dateISO);
+  const existing = state.store.sessions[dateISO];
+  if (existing && !existing.completedAt && existing.planId !== currentPlan.id) {
+    state.store.sessions[dateISO] = makeBlankSession(dateISO);
+  }
   if (!state.store.sessions[dateISO] && create) {
     state.store.sessions[dateISO] = makeBlankSession(dateISO);
   }
@@ -433,7 +472,10 @@ function renderToday() {
   const completion = Math.round((doneSets / allSets) * 100);
   const dateContext = isToday(state.selectedDate) ? "Hoje" : plan.name;
   const distance = Number(session.cardio.distance) || 0;
-  const cardioProgress = Math.min(100, Math.round((distance / CARDIO_MINIMUM) * 100));
+  const cardioMinimum = Number(plan.cardio.minimum ?? CARDIO_MINIMUM);
+  const cardioGoal = Number(plan.cardio.goal ?? CARDIO_LONG_TERM);
+  const cardioDuration = Number(plan.cardio.duration ?? 12);
+  const cardioProgress = cardioMinimum > 0 ? Math.min(100, Math.round((distance / cardioMinimum) * 100)) : 0;
 
   app.innerHTML = `
     <section class="date-switcher" aria-label="Selecionar dia">
@@ -451,7 +493,7 @@ function renderToday() {
       <p>${plan.exercises.length} exercícios programados. ${cycle.blockLabel}, com execução técnica e registro série por série.</p>
       <div class="hero-stats">
         <span class="stat-pill"><span class="stat-pill-dot"></span>${allSets} séries</span>
-        <span class="stat-pill">12 min de cardio</span>
+        <span class="stat-pill">${cardioDuration} min de cardio</span>
         <span class="stat-pill">${doneSets}/${allSets} concluídas</span>
       </div>
     </section>
@@ -502,10 +544,10 @@ function renderToday() {
           </div>
         </div>
         <div class="progress-strip" style="margin-top: 15px; padding: 0; border: 0; background: transparent">
-          <div class="progress-strip-header"><span>Meta mínima: ${CARDIO_MINIMUM.toLocaleString("pt-BR")} m</span><strong>${cardioProgress}%</strong></div>
+          <div class="progress-strip-header"><span>Meta mínima: ${cardioMinimum.toLocaleString("pt-BR")} m</span><strong>${cardioProgress}%</strong></div>
           <div class="progress-track"><div class="progress-fill" style="width: ${cardioProgress}%"></div></div>
         </div>
-        <div class="cardio-goal"><span>Objetivo de longo prazo</span><strong>${CARDIO_LONG_TERM.toLocaleString("pt-BR")} m</strong></div>
+        <div class="cardio-goal"><span>Objetivo de longo prazo</span><strong>${cardioGoal.toLocaleString("pt-BR")} m</strong></div>
       </div>
     </section>
 
@@ -547,7 +589,7 @@ function renderWeek() {
       ${dates
         .map((dateISO) => {
           const date = parseISO(dateISO);
-          const plan = workoutPlan[date.getDay()];
+          const plan = getPlanForDate(dateISO);
           const session = state.store.sessions[dateISO];
           const dateParts = formatShortDate(dateISO);
           const setsDone = completedSets(plan, session);
@@ -588,7 +630,7 @@ function renderProgress() {
   const sessions = completedSessions();
   const cardioDistances = sessions.map(([, session]) => Number(session.cardio?.distance) || 0).filter(Boolean);
   const bestDistance = cardioDistances.length ? Math.max(...cardioDistances) : 0;
-  const totalSetsDone = sessions.reduce((total, [dateISO, session]) => total + completedSets(getPlanForDate(dateISO), session), 0);
+  const totalSetsDone = sessions.reduce((total, [dateISO, session]) => total + completedSets(getPlanForSession(dateISO, session), session), 0);
   const streak = calculateStreak(sessions);
   const bestPercent = Math.min(100, Math.round((bestDistance / CARDIO_LONG_TERM) * 100));
 
@@ -612,7 +654,7 @@ function renderProgress() {
             ? sessions
                 .slice(0, 10)
                 .map(([dateISO, session]) => {
-                  const plan = getPlanForDate(dateISO);
+                  const plan = getPlanForSession(dateISO, session);
                   const date = formatShortDate(dateISO);
                   const done = completedSets(plan, session);
                   return `<article class="history-item"><div class="history-date"><strong>${date.day}</strong><span>${date.month}</span></div><div class="history-info"><h3>${plan.title}</h3><p>${done} séries concluídas</p></div><span class="history-distance">${session.cardio?.distance ? `${Number(session.cardio.distance).toLocaleString("pt-BR")} m` : "—"}</span></article>`;
@@ -639,6 +681,168 @@ function renderProgress() {
   `;
 }
 
+function makeBuilderExercise(source = null, index = 0) {
+  if (source) {
+    return {
+      ...source,
+      id: `custom-ex-${Date.now()}-${index}`,
+      catalogId: source.id,
+      target: source.target ?? "",
+    };
+  }
+  return {
+    id: `custom-ex-${Date.now()}-${index}`,
+    catalogId: "",
+    name: "",
+    muscle: "",
+    sets: 3,
+    minReps: 8,
+    maxReps: 12,
+    loadUnit: "kg",
+    unit: "reps",
+    target: "",
+    rir: "RIR 1-2",
+    type: "isolador",
+  };
+}
+
+function startWorkoutBuilder() {
+  state.builder = {
+    title: "",
+    groups: "",
+    date: state.selectedDate,
+    warmupTitle: "",
+    warmup: "",
+    cardio: {
+      intensity: "Moderado",
+      duration: 12,
+      minimum: 1400,
+      goal: 2400,
+      note: "Ritmo estável e controlado.",
+    },
+    exercises: [makeBuilderExercise()],
+  };
+}
+
+function renderPlanLibrary() {
+  const baseDays = [1, 2, 3, 4, 5, 6, 0];
+  const customPlans = state.store.customPlans ?? [];
+
+  app.innerHTML = `
+    <header class="view-header plans-header">
+      <div>
+        <p class="eyebrow">Sua biblioteca</p>
+        <h1>Treinos</h1>
+        <p>Crie combinações para usar quando quiser, mantendo o registro completo de séries, cardio e evolução.</p>
+      </div>
+      <button class="compact-primary" type="button" data-action="new-workout">+ Novo treino</button>
+    </header>
+
+    ${
+      customPlans.length
+        ? `<section class="section"><div class="section-heading"><div><p class="eyebrow">Criados por você</p><h2>Personalizados</h2></div></div><div class="plan-grid">${customPlans
+            .map(
+              (plan) => `
+                <article class="plan-card is-custom">
+                  <div class="plan-card-top"><span class="plan-badge">Personalizado</span><span>${plan.exercises.length} exercícios</span></div>
+                  <h3>${plan.title}</h3>
+                  <p>${plan.groups || plan.exercises.map((exercise) => exercise.muscle).filter(Boolean).join(" · ")}</p>
+                  <div class="plan-card-actions">
+                    <button class="secondary-button" type="button" data-action="use-custom-plan" data-plan-id="${plan.id}">Usar em ${formatDateHeading(state.selectedDate)}</button>
+                  </div>
+                </article>`,
+            )
+            .join("")}</div></section>`
+        : `<section class="section"><div class="empty-card"><strong>Nenhum treino personalizado</strong>Crie seu primeiro modelo escolhendo cada exercício e parâmetro.</div></section>`
+    }
+
+    <section class="section">
+      <div class="section-heading"><div><p class="eyebrow">Plano atual</p><h2>Treinos da semana</h2></div></div>
+      <div class="plan-grid">
+        ${baseDays
+          .map((day) => {
+            const plan = workoutPlan[day];
+            return `<article class="plan-card"><div class="plan-card-top"><span class="plan-badge">${plan.short}</span><span>${plan.exercises.length} exercícios</span></div><h3>${plan.title}</h3><p>${plan.cardio.intensity} · 12 min de cardio</p></article>`;
+          })
+          .join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderBuilderExercise(exercise, index) {
+  return `
+    <article class="builder-exercise">
+      <div class="builder-exercise-head">
+        <span class="exercise-number">${String(index + 1).padStart(2, "0")}</span>
+        <div><h3>Exercício ${index + 1}</h3><p>Escolha da biblioteca ou preencha um novo.</p></div>
+        ${state.builder.exercises.length > 1 ? `<button class="remove-button" type="button" data-action="remove-builder-exercise" data-index="${index}" aria-label="Remover exercício ${index + 1}">×</button>` : ""}
+      </div>
+      <div class="builder-fields">
+        <label class="builder-field is-wide"><span>Biblioteca de exercícios</span><select data-action="catalog-exercise" data-index="${index}"><option value="">Novo exercício</option>${exerciseCatalog
+          .map((item) => `<option value="${item.id}" ${exercise.catalogId === item.id ? "selected" : ""}>${item.name}</option>`)
+          .join("")}</select></label>
+        <label class="builder-field is-wide"><span>Nome</span><input value="${escapeAttribute(exercise.name)}" placeholder="Ex.: Supino reto" data-action="builder-exercise" data-index="${index}" data-field="name" /></label>
+        <label class="builder-field"><span>Grupo muscular</span><input value="${escapeAttribute(exercise.muscle)}" placeholder="Peito" data-action="builder-exercise" data-index="${index}" data-field="muscle" /></label>
+        <label class="builder-field"><span>Séries</span><input type="number" min="1" max="20" value="${exercise.sets}" data-action="builder-exercise" data-index="${index}" data-field="sets" /></label>
+        <label class="builder-field"><span>Reps mínimas</span><input type="number" min="0" value="${exercise.minReps ?? ""}" data-action="builder-exercise" data-index="${index}" data-field="minReps" /></label>
+        <label class="builder-field"><span>Reps máximas</span><input type="number" min="0" value="${exercise.maxReps ?? ""}" data-action="builder-exercise" data-index="${index}" data-field="maxReps" /></label>
+        <label class="builder-field"><span>Medida</span><select data-action="builder-exercise" data-index="${index}" data-field="unit"><option value="reps" ${exercise.unit === "reps" ? "selected" : ""}>Repetições</option><option value="s" ${exercise.unit === "s" ? "selected" : ""}>Segundos</option></select></label>
+        <label class="builder-field"><span>Unidade de carga</span><select data-action="builder-exercise" data-index="${index}" data-field="loadUnit"><option value="kg" ${exercise.loadUnit === "kg" ? "selected" : ""}>kg</option><option value="lb" ${exercise.loadUnit === "lb" ? "selected" : ""}>lb</option><option value="livre" ${exercise.loadUnit === "livre" ? "selected" : ""}>Peso livre/corporal</option></select></label>
+        <label class="builder-field"><span>Tipo</span><select data-action="builder-exercise" data-index="${index}" data-field="type"><option value="composto" ${exercise.type === "composto" ? "selected" : ""}>Composto</option><option value="isolador" ${exercise.type === "isolador" ? "selected" : ""}>Isolador</option></select></label>
+        <label class="builder-field"><span>RIR</span><input value="${escapeAttribute(exercise.rir)}" placeholder="RIR 1-2" data-action="builder-exercise" data-index="${index}" data-field="rir" /></label>
+        <label class="builder-field is-wide"><span>Observação ou alvo</span><input value="${escapeAttribute(exercise.target)}" placeholder="Ex.: por perna, falha controlada" data-action="builder-exercise" data-index="${index}" data-field="target" /></label>
+      </div>
+    </article>
+  `;
+}
+
+function renderWorkoutBuilder() {
+  const builder = state.builder;
+  app.innerHTML = `
+    <header class="builder-header">
+      <button class="back-button" type="button" data-action="cancel-builder">←</button>
+      <div><p class="eyebrow">Novo modelo</p><h1>Criar treino</h1></div>
+    </header>
+    <section class="builder-section">
+      <div class="builder-section-title"><span>1</span><div><h2>Informações gerais</h2><p>Nome, foco e data em que deseja usar.</p></div></div>
+      <div class="builder-panel builder-fields">
+        <label class="builder-field is-wide"><span>Nome do treino</span><input value="${escapeAttribute(builder.title)}" placeholder="Ex.: Peito intenso" data-action="builder-field" data-field="title" /></label>
+        <label class="builder-field"><span>Grupos musculares</span><input value="${escapeAttribute(builder.groups)}" placeholder="Peito + Ombros" data-action="builder-field" data-field="groups" /></label>
+        <label class="builder-field"><span>Usar na data</span><input type="date" value="${builder.date}" data-action="builder-field" data-field="date" /></label>
+      </div>
+    </section>
+    <section class="builder-section">
+      <div class="builder-section-title"><span>2</span><div><h2>Exercícios</h2><p>Todos os parâmetros podem ser ajustados.</p></div></div>
+      <div class="builder-exercise-list">${builder.exercises.map(renderBuilderExercise).join("")}</div>
+      <button class="add-exercise-button" type="button" data-action="add-builder-exercise">+ Adicionar exercício</button>
+    </section>
+    <section class="builder-section">
+      <div class="builder-section-title"><span>3</span><div><h2>Aquecimento</h2><p>Protocolo que aparecerá antes do treino.</p></div></div>
+      <div class="builder-panel builder-fields">
+        <label class="builder-field"><span>Exercício principal</span><input value="${escapeAttribute(builder.warmupTitle)}" placeholder="Ex.: Agachamento livre" data-action="builder-field" data-field="warmupTitle" /></label>
+        <label class="builder-field is-wide"><span>Protocolo</span><textarea placeholder="Séries leves e progressivas..." data-action="builder-field" data-field="warmup">${escapeAttribute(builder.warmup)}</textarea></label>
+      </div>
+    </section>
+    <section class="builder-section">
+      <div class="builder-section-title"><span>4</span><div><h2>Cardio</h2><p>Duração, intensidade e metas de distância.</p></div></div>
+      <div class="builder-panel builder-fields">
+        <label class="builder-field"><span>Intensidade</span><input value="${escapeAttribute(builder.cardio.intensity)}" data-action="builder-cardio" data-field="intensity" /></label>
+        <label class="builder-field"><span>Duração (min)</span><input type="number" min="0" value="${builder.cardio.duration}" data-action="builder-cardio" data-field="duration" /></label>
+        <label class="builder-field"><span>Meta mínima (m)</span><input type="number" min="0" value="${builder.cardio.minimum}" data-action="builder-cardio" data-field="minimum" /></label>
+        <label class="builder-field"><span>Meta futura (m)</span><input type="number" min="0" value="${builder.cardio.goal}" data-action="builder-cardio" data-field="goal" /></label>
+        <label class="builder-field is-wide"><span>Orientação</span><input value="${escapeAttribute(builder.cardio.note)}" data-action="builder-cardio" data-field="note" /></label>
+      </div>
+    </section>
+    <div class="builder-footer"><button class="primary-button" type="button" data-action="save-custom-workout">Salvar e usar treino</button></div>
+  `;
+}
+
+function renderPlans() {
+  if (state.builder) renderWorkoutBuilder();
+  else renderPlanLibrary();
+}
+
 function render() {
   document.querySelectorAll(".nav-item").forEach((button) => {
     const active = button.dataset.view === state.view;
@@ -648,6 +852,7 @@ function render() {
 
   if (state.view === "week") renderWeek();
   else if (state.view === "progress") renderProgress();
+  else if (state.view === "plans") renderPlans();
   else renderToday();
 }
 
@@ -677,6 +882,27 @@ app.addEventListener("input", (event) => {
   const target = event.target;
   const action = target.dataset.action;
   if (!action) return;
+
+  if (action === "builder-field") {
+    state.builder[target.dataset.field] = target.value;
+    return;
+  }
+  if (action === "builder-cardio") {
+    state.builder.cardio[target.dataset.field] = target.value;
+    return;
+  }
+  if (action === "builder-exercise") {
+    const exercise = state.builder.exercises[Number(target.dataset.index)];
+    const numericFields = new Set(["sets", "minReps", "maxReps"]);
+    exercise[target.dataset.field] = numericFields.has(target.dataset.field)
+      ? target.value === ""
+        ? null
+        : Number(target.value)
+      : target.value;
+    return;
+  }
+  if (action === "catalog-exercise") return;
+
   const session = getSession();
 
   if (action === "set-input") {
@@ -691,6 +917,17 @@ app.addEventListener("input", (event) => {
 
 app.addEventListener("change", (event) => {
   const target = event.target;
+  if (target.dataset.action === "catalog-exercise") {
+    const index = Number(target.dataset.index);
+    const template = exerciseCatalog.find((exercise) => exercise.id === target.value);
+    state.builder.exercises[index] = template
+      ? makeBuilderExercise(template, index)
+      : makeBuilderExercise(null, index);
+    const scrollPosition = window.scrollY;
+    renderWorkoutBuilder();
+    requestAnimationFrame(() => window.scrollTo(0, scrollPosition));
+    return;
+  }
   if (target.dataset.action === "backup-file") {
     const file = target.files?.[0];
     if (!file) return;
@@ -701,6 +938,11 @@ app.addEventListener("change", (event) => {
         if (!imported || imported.version !== 1 || typeof imported.sessions !== "object") {
           throw new Error("Formato de backup inválido");
         }
+        imported.customPlans ??= [];
+        imported.datePlanOverrides ??= {};
+        Object.entries(imported.sessions).forEach(([dateISO, session]) => {
+          session.planId ??= `base-${parseISO(dateISO).getDay()}`;
+        });
         state.store = imported;
         persist();
         renderProgress();
@@ -761,6 +1003,100 @@ app.addEventListener("click", (event) => {
 
   if (action === "import-data") {
     document.querySelector("#backup-file")?.click();
+  }
+
+  if (action === "new-workout") {
+    startWorkoutBuilder();
+    renderWorkoutBuilder();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (action === "cancel-builder") {
+    state.builder = null;
+    renderPlanLibrary();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  if (action === "add-builder-exercise") {
+    state.builder.exercises.push(makeBuilderExercise(null, state.builder.exercises.length));
+    renderWorkoutBuilder();
+    requestAnimationFrame(() => window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" }));
+  }
+
+  if (action === "remove-builder-exercise") {
+    state.builder.exercises.splice(Number(target.dataset.index), 1);
+    renderWorkoutBuilder();
+  }
+
+  if (action === "use-custom-plan") {
+    const currentSession = state.store.sessions[state.selectedDate];
+    if (currentSession?.completedAt) {
+      showToast("Essa data já possui um treino concluído.");
+      return;
+    }
+    state.store.datePlanOverrides[state.selectedDate] = target.dataset.planId;
+    delete state.store.sessions[state.selectedDate];
+    persist();
+    state.view = "today";
+    render();
+    showToast("Treino aplicado à data selecionada.");
+  }
+
+  if (action === "save-custom-workout") {
+    const builder = state.builder;
+    if (!builder.title.trim()) {
+      showToast("Dê um nome ao treino.");
+      return;
+    }
+    if (!builder.date) {
+      showToast("Escolha a data de uso.");
+      return;
+    }
+    if (state.store.sessions[builder.date]?.completedAt) {
+      showToast("A data escolhida já possui um treino concluído.");
+      return;
+    }
+    const validExercises = builder.exercises.filter((exercise) => exercise.name.trim() && Number(exercise.sets) > 0);
+    if (!validExercises.length) {
+      showToast("Adicione pelo menos um exercício válido.");
+      return;
+    }
+    const planId = `custom-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const customPlan = {
+      id: planId,
+      isBase: false,
+      short: "NOVO",
+      name: "Treino personalizado",
+      title: builder.title.trim(),
+      groups: builder.groups.trim(),
+      warmupTitle: builder.warmupTitle.trim() || "Aquecimento livre",
+      warmup: builder.warmup.trim() || "Faça séries leves e progressivas antes das séries válidas.",
+      cardio: {
+        intensity: builder.cardio.intensity.trim() || "Moderado",
+        duration: Number(builder.cardio.duration) || 0,
+        minimum: Number(builder.cardio.minimum) || 0,
+        goal: Number(builder.cardio.goal) || 0,
+        note: builder.cardio.note.trim(),
+      },
+      exercises: validExercises.map((exercise, index) => ({
+        ...exercise,
+        id: `${planId}-exercise-${index + 1}`,
+        catalogId: undefined,
+        sets: Number(exercise.sets),
+        minReps: exercise.minReps == null ? null : Number(exercise.minReps),
+        maxReps: exercise.maxReps == null ? null : Number(exercise.maxReps),
+      })),
+      createdAt: new Date().toISOString(),
+    };
+    state.store.customPlans.push(customPlan);
+    state.store.datePlanOverrides[builder.date] = planId;
+    delete state.store.sessions[builder.date];
+    state.selectedDate = builder.date;
+    state.builder = null;
+    state.view = "today";
+    persist();
+    render();
+    showToast("Novo treino criado e aplicado.");
   }
 });
 

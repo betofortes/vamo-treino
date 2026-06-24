@@ -1,0 +1,29 @@
+# Vamo
+
+PWA mobile-first para acompanhamento pessoal de musculação e corrida.
+
+## Executar localmente
+
+Sirva esta pasta por HTTP e abra o endereço fornecido no navegador. O aplicativo não possui dependências de instalação ou etapa de compilação.
+
+Exemplo com Python:
+
+```powershell
+python -m http.server 4173
+```
+
+Depois, acesse `http://localhost:4173`.
+
+## Dados
+
+Os registros ficam no armazenamento local do navegador. A tela Progresso permite exportar e importar um backup em JSON, mantendo a operação sem banco de dados e sem mensalidade.
+
+## Publicação gratuita
+
+O projeto está preparado para GitHub Pages. Depois de enviar os arquivos para um repositório público no GitHub:
+
+1. Abra **Settings > Pages** no repositório.
+2. Em **Source**, escolha **Deploy from a branch**.
+3. Selecione a branch **main**, a pasta **/(root)** e salve.
+
+O endereço gratuito terá o formato `https://usuario.github.io/repositorio/`.

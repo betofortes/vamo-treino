@@ -1,12 +1,17 @@
 const STORAGE_KEY = "vamo-training-v1";
-const AUTH_KEY = "workout-auth-v1";
-const AUTH_SESSION_KEY = "workout-session-v1";
 const CYCLE_START = "2026-06-22";
 const CARDIO_MINIMUM = 1400;
 const CARDIO_LONG_TERM = 2400;
 const DAY_ORDER = [1, 2, 3, 4, 5, 6, 0];
 const DAY_NAMES = ["Domingo", "Segunda-feira", "Terça-feira", "Quarta-feira", "Quinta-feira", "Sexta-feira", "Sábado"];
 const DAY_SHORT = ["DOM", "SEG", "TER", "QUA", "QUI", "SEX", "SÁB"];
+
+try {
+  localStorage.removeItem("workout-auth-v1");
+  localStorage.removeItem("workout-session-v1");
+} catch {
+  // O aplicativo continua disponível mesmo quando o navegador restringe o armazenamento.
+}
 
 const makeExercise = (
   id,
@@ -167,7 +172,6 @@ const state = {
   builder: null,
   sheetBuilder: null,
   exerciseTimers: {},
-  authenticated: isAuthenticated(),
 };
 
 const app = document.querySelector("#app");
@@ -251,10 +255,6 @@ function normalizeSession(store, dateISO, session) {
   session.timer ??= { elapsed: 0, running: false, startedAt: null };
   session.planSnapshot ??= cloneValue(findStoredPlan(store, session.planId, weekday));
   return session;
-}
-
-function isAuthenticated() {
-  return Boolean(localStorage.getItem(AUTH_KEY)) && localStorage.getItem(AUTH_SESSION_KEY) === "active";
 }
 
 function defaultStore() {
@@ -871,13 +871,12 @@ function renderProgress() {
       <div class="section-heading"><div><p class="eyebrow">Privacidade</p><h2>Seus dados</h2></div></div>
       <div class="data-card">
         <div>
-          <h3>Armazenados neste aparelho</h3>
-          <p>O Workout funciona sem mensalidade e não envia seus treinos para servidores externos. Exporte um backup quando quiser trocar de aparelho.</p>
+          <h3>Levar dados para outro navegador</h3>
+          <p>Cada navegador mantém uma cópia separada. Exporte o backup neste navegador e importe o arquivo no outro para transferir sua ficha e seu histórico.</p>
         </div>
         <div class="data-actions">
-          <button class="secondary-button" type="button" data-action="export-data">Exportar backup</button>
-          <button class="secondary-button" type="button" data-action="import-data">Importar backup</button>
-          <button class="secondary-button" type="button" data-action="logout">Sair da conta</button>
+          <button class="secondary-button" type="button" data-action="export-data">1. Exportar dados</button>
+          <button class="secondary-button" type="button" data-action="import-data">2. Importar neste navegador</button>
           <input class="sr-only" id="backup-file" type="file" accept="application/json,.json" data-action="backup-file" />
         </div>
       </div>
@@ -1195,46 +1194,7 @@ function renderPlans() {
   else renderPlanLibrary();
 }
 
-function getAuthConfig() {
-  try {
-    return JSON.parse(localStorage.getItem(AUTH_KEY) || "null");
-  } catch {
-    return null;
-  }
-}
-
-async function hashPin(pin) {
-  const bytes = new TextEncoder().encode(pin);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function renderAuth() {
-  const config = getAuthConfig();
-  document.body.classList.add("auth-mode");
-  app.innerHTML = `
-    <section class="auth-screen">
-      <div class="auth-card">
-        <span class="auth-mark">W</span>
-        <p class="eyebrow">Workout pessoal</p>
-        <h1>${config ? "Entrar" : "Criar acesso"}</h1>
-        <p>${config ? "Use seu login e PIN para abrir seus treinos." : "Crie um login local. Seus dados continuam somente neste aparelho."}</p>
-        <form class="auth-form" data-action="auth-form">
-          <label><span>Login</span><input name="username" autocomplete="username" value="${escapeAttribute(config?.username ?? "")}" required /></label>
-          <label><span>PIN de 4 dígitos</span><input name="pin" type="password" inputmode="numeric" pattern="[0-9]{4}" maxlength="4" autocomplete="${config ? "current-password" : "new-password"}" required /></label>
-          <button class="primary-button" type="submit">${config ? "Entrar" : "Criar acesso e entrar"}</button>
-        </form>
-        <p class="auth-note">O PIN protege o acesso neste navegador, sem servidor ou mensalidade.</p>
-      </div>
-    </section>`;
-}
-
 function render() {
-  if (!state.authenticated) {
-    renderAuth();
-    return;
-  }
-  document.body.classList.remove("auth-mode");
   document.querySelectorAll(".nav-item").forEach((button) => {
     const active = button.dataset.view === state.view;
     button.classList.toggle("is-active", active);
@@ -1267,30 +1227,6 @@ document.querySelector("#profile-button").addEventListener("click", () => {
   state.view = "progress";
   render();
   window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-});
-
-app.addEventListener("submit", async (event) => {
-  const form = event.target.closest('[data-action="auth-form"]');
-  if (!form) return;
-  event.preventDefault();
-  const data = new FormData(form);
-  const username = String(data.get("username") ?? "").trim();
-  const pin = String(data.get("pin") ?? "");
-  if (!username || !/^\d{4}$/.test(pin)) {
-    showToast("Informe o login e um PIN de 4 dígitos.");
-    return;
-  }
-  const pinHash = await hashPin(pin);
-  const config = getAuthConfig();
-  if (config && (config.username.toLocaleLowerCase("pt-BR") !== username.toLocaleLowerCase("pt-BR") || config.pinHash !== pinHash)) {
-    showToast("Login ou PIN incorreto.");
-    return;
-  }
-  if (!config) localStorage.setItem(AUTH_KEY, JSON.stringify({ username, pinHash }));
-  localStorage.setItem(AUTH_SESSION_KEY, "active");
-  state.authenticated = true;
-  render();
-  showToast(config ? "Bem-vindo de volta." : "Acesso criado com sucesso.");
 });
 
 app.addEventListener("input", (event) => {
@@ -1510,21 +1446,11 @@ app.addEventListener("click", (event) => {
     link.download = `workout-backup-${localISO(new Date())}.json`;
     link.click();
     URL.revokeObjectURL(url);
-    showToast("Backup exportado.");
+    showToast("Dados exportados. Importe o arquivo no outro navegador.");
   }
 
   if (action === "import-data") {
     document.querySelector("#backup-file")?.click();
-  }
-
-  if (action === "logout") {
-    localStorage.removeItem(AUTH_SESSION_KEY);
-    state.authenticated = false;
-    if (timerTicker) window.clearInterval(timerTicker);
-    timerTicker = null;
-    render();
-    showToast("Você saiu da conta.");
-    return;
   }
 
   if (action === "go-plans") {

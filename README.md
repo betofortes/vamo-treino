@@ -2,6 +2,8 @@
 
 PWA mobile-first para acompanhamento pessoal de musculação e corrida.
 
+Além do plano semanal inicial, a área **Treinos** permite criar modelos personalizados escolhendo exercícios da biblioteca ou cadastrando novos, com séries, repetições, unidade de carga, RIR, aquecimento, cardio e data de uso.
+
 ## Executar localmente
 
 Sirva esta pasta por HTTP e abra o endereço fornecido no navegador. O aplicativo não possui dependências de instalação ou etapa de compilação.

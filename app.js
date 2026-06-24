@@ -669,7 +669,7 @@ function renderProgress() {
       <div class="data-card">
         <div>
           <h3>Armazenados neste aparelho</h3>
-          <p>O Vamo funciona sem mensalidade e não envia seus treinos para servidores externos. Exporte um backup quando quiser trocar de aparelho.</p>
+          <p>O Workout funciona sem mensalidade e não envia seus treinos para servidores externos. Exporte um backup quando quiser trocar de aparelho.</p>
         </div>
         <div class="data-actions">
           <button class="secondary-button" type="button" data-action="export-data">Exportar backup</button>
@@ -995,7 +995,7 @@ app.addEventListener("click", (event) => {
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.href = url;
-    link.download = `vamo-backup-${localISO(new Date())}.json`;
+    link.download = `workout-backup-${localISO(new Date())}.json`;
     link.click();
     URL.revokeObjectURL(url);
     showToast("Backup exportado.");
@@ -1101,10 +1101,24 @@ app.addEventListener("click", (event) => {
 });
 
 if ("serviceWorker" in navigator) {
+  let reloadingForUpdate = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (reloadingForUpdate) return;
+    reloadingForUpdate = true;
+    window.location.reload();
+  });
+
   window.addEventListener("load", () => {
-    navigator.serviceWorker.register("./sw.js").catch((error) => {
-      console.warn("Modo offline indisponível neste navegador.", error);
-    });
+    navigator.serviceWorker
+      .register("./sw.js")
+      .then((registration) => {
+        registration.update();
+        window.setInterval(() => registration.update(), 60 * 60 * 1000);
+      })
+      .catch((error) => {
+        console.warn("Modo offline indisponível neste navegador.", error);
+      });
   });
 }
 

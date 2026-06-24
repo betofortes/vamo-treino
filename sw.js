@@ -1,11 +1,11 @@
-const CACHE_NAME = "vamo-shell-v2";
+const CACHE_NAME = "workout-shell-v4";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css",
-  "./app.js",
-  "./manifest.webmanifest",
-  "./icons/icon.svg",
+  "./styles.css?v=4",
+  "./app.js?v=4",
+  "./manifest.webmanifest?v=4",
+  "./icons/icon.svg?v=4",
 ];
 
 self.addEventListener("install", (event) => {
@@ -24,18 +24,32 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+
+  const requestUrl = new URL(event.request.url);
+  if (requestUrl.origin !== self.location.origin) return;
+
+  if (event.request.mode === "navigate") {
+    event.respondWith(
+      fetch(event.request, { cache: "no-store" })
+        .then((response) => {
+          if (response.ok) {
+            caches.open(CACHE_NAME).then((cache) => cache.put("./index.html", response.clone()));
+          }
+          return response;
+        })
+        .catch(() => caches.match("./index.html")),
+    );
+    return;
+  }
+
   event.respondWith(
-    caches.match(event.request).then(
-      (cached) =>
-        cached ||
-        fetch(event.request)
-          .then((response) => {
-            if (!response || response.status !== 200 || response.type === "opaque") return response;
-            const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-            return response;
-          })
-          .catch(() => caches.match("./index.html")),
-    ),
+    fetch(event.request, { cache: "no-cache" })
+      .then((response) => {
+        if (response.ok) {
+          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, response.clone()));
+        }
+        return response;
+      })
+      .catch(() => caches.match(event.request)),
   );
 });

@@ -1,0 +1,21 @@
+{
+  "name": "Vamo - Treino",
+  "short_name": "Vamo",
+  "description": "Acompanhamento pessoal de musculação e corrida.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#f4f3ee",
+  "theme_color": "#10231f",
+  "lang": "pt-BR",
+  "categories": ["fitness", "health", "lifestyle"],
+  "icons": [
+    {
+      "src": "./icons/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

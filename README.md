@@ -4,6 +4,17 @@ PWA mobile-first para acompanhamento pessoal de musculação e corrida.
 
 Além do plano semanal inicial, a área **Treinos** permite criar modelos personalizados escolhendo exercícios da biblioteca ou cadastrando novos, com séries, repetições, unidade de carga, RIR, aquecimento, cardio e data de uso.
 
+Na seção **Corrida**, a velocidade da esteira pode ser registrada em km/h. O último valor é lembrado automaticamente no treino seguinte e também aparece no histórico.
+
+## Recursos principais
+
+- Ficha atual única, organizada por treinos e dias da semana.
+- Abertura e edição individual de cada treino, incluindo exercícios, séries, repetições, carga sugerida, observações, descanso e ordem.
+- Criação de uma ficha completa com 1 a 7 treinos e confirmação antes de substituir a ficha anterior.
+- Cronômetro geral persistente e cronômetros independentes de intervalo para cada exercício.
+- Registro de alongamento/mobilidade, tempo total, distância e velocidade da esteira no histórico.
+- Login local com usuário e PIN de 4 dígitos, sem backend ou mensalidade.
+
 ## Executar localmente
 
 Sirva esta pasta por HTTP e abra o endereço fornecido no navegador. O aplicativo não possui dependências de instalação ou etapa de compilação.

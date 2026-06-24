@@ -1,11 +1,11 @@
-const CACHE_NAME = "workout-shell-v4";
+const CACHE_NAME = "workout-shell-v6";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=4",
-  "./app.js?v=4",
-  "./manifest.webmanifest?v=4",
-  "./icons/icon.svg?v=4",
+  "./styles.css?v=6",
+  "./app.js?v=6",
+  "./manifest.webmanifest?v=6",
+  "./icons/icon.svg?v=6",
 ];
 
 self.addEventListener("install", (event) => {

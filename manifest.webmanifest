@@ -1,6 +1,6 @@
 {
-  "name": "Vamo - Treino",
-  "short_name": "Vamo",
+  "name": "Workout",
+  "short_name": "Workout",
   "description": "Acompanhamento pessoal de musculação e corrida.",
   "start_url": "./",
   "scope": "./",

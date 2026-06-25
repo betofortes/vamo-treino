@@ -259,6 +259,7 @@ function normalizeSession(store, dateISO, session) {
   session.timer ??= { elapsed: 0, running: false, startedAt: null };
   session.planSnapshot ??= cloneValue(findStoredPlan(store, session.planId, weekday));
   session.loadRecommendations ??= {};
+  session.repRecommendations ??= {};
   return session;
 }
 
@@ -568,15 +569,18 @@ function makeBlankSession(dateISO) {
   if (!plan) return null;
   const previousSpeed = latestPreviousCardioSpeed(dateISO);
   const loadRecommendations = {};
+  const repRecommendations = {};
   const exerciseLogs = Object.fromEntries(
     plan.exercises.map((exercise) => {
-      const recommendation = buildLoadRecommendation(dateISO, exercise);
-      if (recommendation) loadRecommendations[exercise.id] = recommendation;
+      const loadRecommendation = buildLoadRecommendation(dateISO, exercise);
+      const repRecommendation = buildRepRecommendation(dateISO, exercise);
+      if (loadRecommendation) loadRecommendations[exercise.id] = loadRecommendation;
+      if (repRecommendation) repRecommendations[exercise.id] = repRecommendation;
       return [
         exercise.id,
         Array.from({ length: exercise.sets }, (_, index) => ({
-          load: recommendation?.loads?.[index] ?? exercise.defaultLoad ?? "",
-          reps: "",
+          load: loadRecommendation?.loads?.[index] ?? exercise.defaultLoad ?? "",
+          reps: repRecommendation?.reps?.[index] ?? "",
           done: false,
         })),
       ];
@@ -597,6 +601,7 @@ function makeBlankSession(dateISO) {
     timer: { elapsed: 0, running: false, startedAt: null },
     planSnapshot: cloneValue(plan),
     loadRecommendations,
+    repRecommendations,
     completedAt: null,
   };
 }
@@ -604,19 +609,23 @@ function makeBlankSession(dateISO) {
 function ensureLoadRecommendations(dateISO, session, plan) {
   if (!session || session.completedAt) return;
   session.loadRecommendations ??= {};
+  session.repRecommendations ??= {};
 
   plan.exercises.forEach((exercise) => {
-    const recommendation = session.loadRecommendations[exercise.id] ?? buildLoadRecommendation(dateISO, exercise);
-    if (!recommendation) return;
-    session.loadRecommendations[exercise.id] = recommendation;
+    const loadRecommendation = session.loadRecommendations[exercise.id] ?? buildLoadRecommendation(dateISO, exercise);
+    const repRecommendation = session.repRecommendations[exercise.id] ?? buildRepRecommendation(dateISO, exercise);
+    if (loadRecommendation) session.loadRecommendations[exercise.id] = loadRecommendation;
+    if (repRecommendation) session.repRecommendations[exercise.id] = repRecommendation;
 
     const logs = session.exerciseLogs?.[exercise.id];
     if (!logs?.length) return;
     logs.forEach((set, index) => {
       const currentLoad = String(set.load ?? "").trim();
       const defaultLoad = String(exercise.defaultLoad ?? "").trim();
-      const canReplace = !set.done && !set.reps && (!currentLoad || currentLoad === defaultLoad);
-      if (canReplace) set.load = recommendation.loads?.[index] ?? recommendation.loads?.[recommendation.loads.length - 1] ?? currentLoad;
+      const canReplaceLoad = loadRecommendation && !set.done && (!currentLoad || currentLoad === defaultLoad);
+      const canReplaceReps = repRecommendation && !set.done && !set.reps;
+      if (canReplaceLoad) set.load = loadRecommendation.loads?.[index] ?? loadRecommendation.loads?.[loadRecommendation.loads.length - 1] ?? currentLoad;
+      if (canReplaceReps) set.reps = repRecommendation.reps?.[index] ?? repRecommendation.reps?.[repRecommendation.reps.length - 1] ?? "";
     });
   });
 }
@@ -762,6 +771,22 @@ function loadSummary(loads, exercise) {
   return `${shown}${suffix}${exercise.loadUnit === "livre" ? "" : ` ${exercise.loadUnit}`}`.trim();
 }
 
+function repStepForExercise(exercise) {
+  return exercise.unit === "s" ? 5 : 1;
+}
+
+function formatRepValue(value) {
+  return String(Math.max(0, Math.round(Number(value) || 0)));
+}
+
+function repSummary(reps, exercise) {
+  const unique = [...new Set(reps.filter(Boolean))];
+  if (!unique.length) return "";
+  const shown = unique.slice(0, 4).join(" / ");
+  const suffix = unique.length > 4 ? "..." : "";
+  return `${shown}${suffix} ${exercise.unit === "s" ? "s" : "reps"}`;
+}
+
 function shortDateLabel(dateISO) {
   const date = parseISO(dateISO);
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(date).replace(".", "");
@@ -817,6 +842,44 @@ function buildLoadRecommendation(dateISO, exercise) {
     message: shouldIncrease
       ? `Progressão sugerida: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`
       : `Carga recomendada: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`,
+  };
+}
+
+function buildRepRecommendation(dateISO, exercise) {
+  const record = latestPreviousExerciseRecord(dateISO, exercise);
+  if (!record) return null;
+
+  const completed = completedExerciseSets(record.logs);
+  if (!completed.length) return null;
+
+  const shouldResetRange = shouldProgressFromPrevious(exercise, record.logs) && Number(exercise.minReps) > 0 && Number(exercise.maxReps) > Number(exercise.minReps);
+  const fallbackSet = completed[completed.length - 1];
+  let increased = false;
+  const reps = Array.from({ length: Number(exercise.sets) || completed.length }, (_, index) => {
+    const source = record.logs[index]?.done ? record.logs[index] : completed[index] ?? fallbackSet;
+    const previousReps = Number(source?.reps);
+    if (!Number.isFinite(previousReps) || previousReps <= 0) return "";
+    if (shouldResetRange) return formatRepValue(exercise.minReps);
+    if (!exercise.maxReps) return formatRepValue(previousReps);
+
+    const nextReps = Math.min(Number(exercise.maxReps), previousReps + repStepForExercise(exercise));
+    if (nextReps > previousReps) increased = true;
+    return formatRepValue(nextReps);
+  });
+
+  const summary = repSummary(reps, exercise);
+  if (!summary) return null;
+
+  const unitLabel = exercise.unit === "s" ? "tempo" : "reps";
+  return {
+    reps,
+    sourceDate: record.date,
+    progressed: increased || shouldResetRange,
+    message: shouldResetRange
+      ? `${unitLabel === "tempo" ? "Tempo" : "Reps"} sugeridas: ${summary}. Como você bateu o topo, mire no começo da faixa com a carga nova.`
+      : increased
+        ? `Progressão de ${unitLabel}: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`
+        : `${unitLabel === "tempo" ? "Tempo" : "Reps"} recomendadas: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`,
   };
 }
 
@@ -887,6 +950,7 @@ function renderExercise(exercise, index, session) {
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
   const loadRecommendation = session.loadRecommendations?.[exercise.id];
+  const repRecommendation = session.repRecommendations?.[exercise.id];
   const restTimer = getRestTimer(exercise);
 
   return `
@@ -901,6 +965,7 @@ function renderExercise(exercise, index, session) {
           </div>
           <div class="previous-label">${previousSummary(state.selectedDate, exercise)}</div>
           ${loadRecommendation && !isComplete ? `<div class="exercise-suggestion is-load-recommendation"><span>↗</span><span>${escapeAttribute(loadRecommendation.message)}</span></div>` : ""}
+          ${repRecommendation && !isComplete ? `<div class="exercise-suggestion is-rep-recommendation"><span>◎</span><span>${escapeAttribute(repRecommendation.message)}</span></div>` : ""}
           ${exercise.notes ? `<div class="exercise-plan-note">${escapeAttribute(exercise.notes)}</div>` : ""}
         </div>
       </div>

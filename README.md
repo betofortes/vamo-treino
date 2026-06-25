@@ -13,7 +13,7 @@ Na seção **Corrida**, a velocidade da esteira pode ser registrada em km/h. O �
 - Criação de uma ficha completa com 1 a 7 treinos e confirmação antes de substituir a ficha anterior.
 - Cronômetro geral persistente e cronômetros independentes de intervalo para cada exercício.
 - Registro de alongamento/mobilidade, tempo total, distância e velocidade da esteira no histórico.
-- Sugestão gratuita de cargas nos treinos seguintes com base nas cargas e repetições do último registro do exercício.
+- Sugestão gratuita de cargas e repetições nos treinos seguintes com base no último registro do exercício.
 - Transferência gratuita dos dados entre navegadores por exportação e importação de backup.
 - Sincronização gratuita entre navegadores usando um projeto Supabase gratuito e um código secreto criado no app.
 

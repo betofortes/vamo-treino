@@ -258,6 +258,7 @@ function normalizeSession(store, dateISO, session) {
   session.mobilityDone ??= false;
   session.timer ??= { elapsed: 0, running: false, startedAt: null };
   session.planSnapshot ??= cloneValue(findStoredPlan(store, session.planId, weekday));
+  session.loadRecommendations ??= {};
   return session;
 }
 
@@ -566,15 +567,26 @@ function makeBlankSession(dateISO) {
   const plan = getPlanForDate(dateISO);
   if (!plan) return null;
   const previousSpeed = latestPreviousCardioSpeed(dateISO);
+  const loadRecommendations = {};
+  const exerciseLogs = Object.fromEntries(
+    plan.exercises.map((exercise) => {
+      const recommendation = buildLoadRecommendation(dateISO, exercise);
+      if (recommendation) loadRecommendations[exercise.id] = recommendation;
+      return [
+        exercise.id,
+        Array.from({ length: exercise.sets }, (_, index) => ({
+          load: recommendation?.loads?.[index] ?? exercise.defaultLoad ?? "",
+          reps: "",
+          done: false,
+        })),
+      ];
+    }),
+  );
+
   return {
     dayId: parseISO(dateISO).getDay(),
     planId: plan.id,
-    exerciseLogs: Object.fromEntries(
-      plan.exercises.map((exercise) => [
-        exercise.id,
-        Array.from({ length: exercise.sets }, () => ({ load: exercise.defaultLoad ?? "", reps: "", done: false })),
-      ]),
-    ),
+    exerciseLogs,
     cardio: {
       duration: String(plan.cardio.duration ?? 12),
       distance: "",
@@ -584,8 +596,29 @@ function makeBlankSession(dateISO) {
     mobilityDone: false,
     timer: { elapsed: 0, running: false, startedAt: null },
     planSnapshot: cloneValue(plan),
+    loadRecommendations,
     completedAt: null,
   };
+}
+
+function ensureLoadRecommendations(dateISO, session, plan) {
+  if (!session || session.completedAt) return;
+  session.loadRecommendations ??= {};
+
+  plan.exercises.forEach((exercise) => {
+    const recommendation = session.loadRecommendations[exercise.id] ?? buildLoadRecommendation(dateISO, exercise);
+    if (!recommendation) return;
+    session.loadRecommendations[exercise.id] = recommendation;
+
+    const logs = session.exerciseLogs?.[exercise.id];
+    if (!logs?.length) return;
+    logs.forEach((set, index) => {
+      const currentLoad = String(set.load ?? "").trim();
+      const defaultLoad = String(exercise.defaultLoad ?? "").trim();
+      const canReplace = !set.done && !set.reps && (!currentLoad || currentLoad === defaultLoad);
+      if (canReplace) set.load = recommendation.loads?.[index] ?? recommendation.loads?.[recommendation.loads.length - 1] ?? currentLoad;
+    });
+  });
 }
 
 function getSession(dateISO = state.selectedDate, create = true) {
@@ -598,6 +631,7 @@ function getSession(dateISO = state.selectedDate, create = true) {
   if (!state.store.sessions[dateISO] && create) {
     state.store.sessions[dateISO] = makeBlankSession(dateISO);
   }
+  ensureLoadRecommendations(dateISO, state.store.sessions[dateISO], currentPlan);
   return state.store.sessions[dateISO];
 }
 
@@ -654,10 +688,38 @@ function completedSets(plan, session) {
   );
 }
 
-function latestPreviousExercise(dateISO, exerciseId) {
-  return Object.entries(state.store.sessions)
-    .filter(([date, session]) => date < dateISO && session.exerciseLogs?.[exerciseId]?.some((set) => set.done))
-    .sort(([a], [b]) => b.localeCompare(a))[0]?.[1]?.exerciseLogs?.[exerciseId];
+function normalizeExerciseLookup(value) {
+  return String(value ?? "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
+}
+
+function exerciseMatches(candidate, exercise) {
+  return candidate?.id === exercise.id || normalizeExerciseLookup(candidate?.name) === normalizeExerciseLookup(exercise.name);
+}
+
+function completedExerciseSets(logs = []) {
+  return logs.filter((set) => set.done);
+}
+
+function latestPreviousExerciseRecord(dateISO, exercise) {
+  const targetName = normalizeExerciseLookup(exercise.name);
+  const entries = Object.entries(state.store.sessions)
+    .filter(([date]) => date < dateISO)
+    .sort(([a], [b]) => b.localeCompare(a));
+
+  for (const [date, session] of entries) {
+    const plan = getPlanForSession(date, session);
+    const previousExercise =
+      plan?.exercises?.find((candidate) => exerciseMatches(candidate, exercise)) ??
+      plan?.exercises?.find((candidate) => normalizeExerciseLookup(candidate.name).includes(targetName) || targetName.includes(normalizeExerciseLookup(candidate.name)));
+    const logs = session.exerciseLogs?.[previousExercise?.id] ?? session.exerciseLogs?.[exercise.id];
+    if (logs?.some((set) => set.done)) return { date, exercise: previousExercise ?? exercise, logs };
+  }
+
+  return null;
 }
 
 function latestPreviousCardioSpeed(dateISO) {
@@ -674,10 +736,41 @@ function formatSpeed(value) {
   return speed.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
 }
 
+function parseLoadValue(value) {
+  const normalized = String(value ?? "").trim().replace(",", ".");
+  const match = normalized.match(/-?\d+(\.\d+)?/);
+  if (!match) return null;
+  const number = Number(match[0]);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatLoadValue(value) {
+  return value.toLocaleString("pt-BR", { maximumFractionDigits: 1 });
+}
+
+function loadStepForExercise(exercise, load) {
+  if (exercise.loadUnit === "lb") return 5;
+  if (exercise.loadUnit === "kg") return load < 20 ? 1 : 2.5;
+  return 0;
+}
+
+function loadSummary(loads, exercise) {
+  const unique = [...new Set(loads.filter(Boolean))];
+  if (!unique.length) return "";
+  const shown = unique.slice(0, 4).join(" / ");
+  const suffix = unique.length > 4 ? "..." : "";
+  return `${shown}${suffix}${exercise.loadUnit === "livre" ? "" : ` ${exercise.loadUnit}`}`.trim();
+}
+
+function shortDateLabel(dateISO) {
+  const date = parseISO(dateISO);
+  return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(date).replace(".", "");
+}
+
 function previousSummary(dateISO, exercise) {
-  const sets = latestPreviousExercise(dateISO, exercise.id);
-  if (!sets) return "Primeiro registro";
-  const completed = sets.filter((set) => set.done);
+  const record = latestPreviousExerciseRecord(dateISO, exercise);
+  if (!record) return "Primeiro registro";
+  const completed = completedExerciseSets(record.logs);
   const loads = [...new Set(completed.map((set) => set.load).filter(Boolean))];
   const reps = completed.map((set) => set.reps).filter(Boolean);
   const loadText = loads.length ? `${loads.join(" / ")} ${exercise.loadUnit === "livre" ? "" : exercise.loadUnit}`.trim() : "carga não informada";
@@ -687,6 +780,44 @@ function previousSummary(dateISO, exercise) {
 function shouldProgress(exercise, logs) {
   if (!exercise.maxReps || !logs?.length) return false;
   return logs.every((set) => set.done && Number(set.reps) >= exercise.maxReps);
+}
+
+function shouldProgressFromPrevious(exercise, logs) {
+  const completed = completedExerciseSets(logs);
+  if (!exercise.maxReps || !completed.length) return false;
+  const expectedSets = Number(exercise.sets) || logs.length;
+  return completed.length >= expectedSets && completed.every((set) => Number(set.reps) >= exercise.maxReps);
+}
+
+function buildLoadRecommendation(dateISO, exercise) {
+  const record = latestPreviousExerciseRecord(dateISO, exercise);
+  if (!record) return null;
+
+  const completed = completedExerciseSets(record.logs);
+  if (!completed.length) return null;
+
+  const shouldIncrease = exercise.loadUnit !== "livre" && shouldProgressFromPrevious(exercise, record.logs);
+  const fallbackSet = completed[completed.length - 1];
+  const loads = Array.from({ length: Number(exercise.sets) || completed.length }, (_, index) => {
+    const source = record.logs[index]?.done ? record.logs[index] : completed[index] ?? fallbackSet;
+    const rawLoad = String(source?.load ?? "").trim();
+    if (!rawLoad) return exercise.defaultLoad ?? "";
+    const numericLoad = parseLoadValue(rawLoad);
+    if (numericLoad == null || !shouldIncrease) return rawLoad;
+    return formatLoadValue(numericLoad + loadStepForExercise(exercise, numericLoad));
+  });
+
+  const summary = loadSummary(loads, exercise);
+  if (!summary) return null;
+
+  return {
+    loads,
+    sourceDate: record.date,
+    progressed: shouldIncrease,
+    message: shouldIncrease
+      ? `Progressão sugerida: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`
+      : `Carga recomendada: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`,
+  };
 }
 
 function escapeAttribute(value) {
@@ -755,6 +886,7 @@ function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
+  const loadRecommendation = session.loadRecommendations?.[exercise.id];
   const restTimer = getRestTimer(exercise);
 
   return `
@@ -768,6 +900,7 @@ function renderExercise(exercise, index, session) {
             <span>${exercise.rir}</span>
           </div>
           <div class="previous-label">${previousSummary(state.selectedDate, exercise)}</div>
+          ${loadRecommendation && !isComplete ? `<div class="exercise-suggestion is-load-recommendation"><span>↗</span><span>${escapeAttribute(loadRecommendation.message)}</span></div>` : ""}
           ${exercise.notes ? `<div class="exercise-plan-note">${escapeAttribute(exercise.notes)}</div>` : ""}
         </div>
       </div>

@@ -14,6 +14,7 @@ Na seção **Corrida**, a velocidade da esteira pode ser registrada em km/h. O �
 - Cronômetro geral persistente e cronômetros independentes de intervalo para cada exercício.
 - Registro de alongamento/mobilidade, tempo total, distância e velocidade da esteira no histórico.
 - Sugestão gratuita de cargas e repetições nos treinos seguintes com base no último registro do exercício.
+- Fluxo gratuito de Coach: gerar resumo do treino para ChatGPT, colar a resposta, salvar recomendações por exercício e exibir no próximo treino.
 - Transferência gratuita dos dados entre navegadores por exportação e importação de backup.
 - Sincronização gratuita entre navegadores usando um projeto Supabase gratuito e um código secreto criado no app.
 

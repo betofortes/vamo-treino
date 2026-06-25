@@ -1020,6 +1020,84 @@ h3 {
   color: var(--lime);
 }
 
+.sync-card {
+  gap: 16px;
+}
+
+.sync-fields {
+  display: grid;
+  gap: 12px;
+}
+
+.sync-fields label span {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.sync-fields input {
+  width: 100%;
+  min-height: 46px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: 0;
+  background: #fff;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.sync-fields input:focus {
+  border-color: var(--teal);
+  box-shadow: 0 0 0 3px rgba(31, 107, 92, 0.1);
+}
+
+.sync-code-box {
+  padding: 13px 14px;
+  border: 1px solid rgba(31, 107, 92, 0.22);
+  border-radius: 14px;
+  background: rgba(216, 255, 101, 0.18);
+}
+
+.sync-code-box span,
+.sync-code-box strong {
+  display: block;
+}
+
+.sync-code-box span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.sync-code-box strong {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+  color: var(--teal);
+  font-size: 0.95rem;
+}
+
+.sync-status {
+  min-height: 1.1em;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.ghost-button {
+  min-height: 42px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 800;
+  cursor: pointer;
+}
+
 .plans-header {
   display: flex;
   align-items: flex-end;

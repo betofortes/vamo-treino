@@ -550,6 +550,194 @@ h3 {
   margin: 9px 0 0;
 }
 
+.coach-recommendation-card {
+  margin-top: 10px;
+  padding: 11px 12px;
+  border: 1px solid rgba(31, 107, 92, 0.18);
+  border-radius: 13px;
+  background: rgba(31, 107, 92, 0.07);
+  color: var(--ink);
+}
+
+.coach-recommendation-card span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--teal);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.coach-recommendation-card p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.exercise-detail-panel {
+  margin: 0 14px 12px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(250, 250, 246, 0.78);
+}
+
+.exercise-detail-panel summary {
+  padding: 11px 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.coach-fields,
+.coach-exercise-drafts {
+  display: grid;
+  gap: 10px;
+}
+
+.coach-fields {
+  padding: 0 12px 12px;
+}
+
+.coach-fields label,
+.coach-exercise-drafts label {
+  display: grid;
+  gap: 6px;
+}
+
+.coach-fields label span,
+.coach-exercise-drafts label span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.coach-fields input,
+.coach-fields textarea,
+.coach-output,
+.coach-exercise-drafts textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  outline: 0;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.coach-fields input {
+  min-height: 42px;
+  padding: 9px 11px;
+}
+
+.coach-fields textarea,
+.coach-output,
+.coach-exercise-drafts textarea {
+  min-height: 84px;
+  padding: 11px;
+  resize: vertical;
+}
+
+.coach-card {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.coach-card + .coach-card {
+  margin-top: 12px;
+}
+
+.coach-card h3 {
+  margin: 0 0 5px;
+  font-size: 0.98rem;
+}
+
+.coach-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.coach-output {
+  min-height: 140px;
+}
+
+.coach-link-panel {
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(250, 250, 246, 0.7);
+}
+
+.coach-link-panel summary {
+  padding: 12px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.coach-exercise-drafts {
+  padding: 0 12px 12px;
+}
+
+.coach-board,
+.coach-status-group {
+  display: grid;
+  gap: 12px;
+}
+
+.coach-status-group {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.coach-status-group h3 {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.coach-recommendation-item {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 13px;
+  background: var(--surface-strong);
+}
+
+.coach-recommendation-item strong,
+.coach-recommendation-item span {
+  display: block;
+}
+
+.coach-recommendation-item strong {
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-size: 0.82rem;
+}
+
+.coach-recommendation-item p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+.coach-recommendation-item span,
+.coach-empty {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
 .cardio-card {
   overflow: hidden;
   padding: 20px;

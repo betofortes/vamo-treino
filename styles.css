@@ -550,16 +550,6 @@ h3 {
   margin: 9px 0 0;
 }
 
-.exercise-suggestion.is-load-recommendation {
-  background: rgba(31, 107, 92, 0.08);
-  color: var(--teal);
-}
-
-.exercise-suggestion.is-rep-recommendation {
-  background: rgba(216, 255, 101, 0.28);
-  color: #405024;
-}
-
 .cardio-card {
   overflow: hidden;
   padding: 20px;

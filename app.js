@@ -1,4 +1,6 @@
 const STORAGE_KEY = "vamo-training-v1";
+const SYNC_CONFIG_KEY = "workout-sync-config-v1";
+const SYNC_STATE_KEY = "workout-sync-state-v1";
 const CYCLE_START = "2026-06-22";
 const CARDIO_MINIMUM = 1400;
 const CARDIO_LONG_TERM = 2400;
@@ -172,12 +174,14 @@ const state = {
   builder: null,
   sheetBuilder: null,
   exerciseTimers: {},
+  sync: loadSyncState(),
 };
 
 const app = document.querySelector("#app");
 const toast = document.querySelector("#toast");
 let toastTimer;
 let timerTicker;
+let syncDebounceTimer;
 
 function localISO(date) {
   const year = date.getFullYear();
@@ -265,6 +269,7 @@ function defaultStore() {
     datePlanOverrides: {},
     activePlan: makeDefaultActivePlan(),
     planArchive: [],
+    updatedAt: new Date().toISOString(),
   };
 
   const tuesday = workoutPlan[2];
@@ -311,6 +316,7 @@ function loadStore() {
       parsed.activePlan ??= makeDefaultActivePlan();
       parsed.activePlan.days = (parsed.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
       parsed.planArchive ??= [];
+      parsed.updatedAt ??= new Date().toISOString();
       Object.entries(parsed.sessions ?? {}).forEach(([dateISO, session]) => {
         normalizeSession(parsed, dateISO, session);
       });
@@ -330,7 +336,212 @@ function loadStore() {
 }
 
 function persist() {
+  state.store.updatedAt = new Date().toISOString();
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
+  scheduleAutoSync();
+}
+
+function loadSyncState() {
+  try {
+    const config = JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY) || "null");
+    const saved = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || "null");
+    return {
+      config: config ?? { url: "", anonKey: "" },
+      code: saved?.code ?? "",
+      lastSyncedAt: saved?.lastSyncedAt ?? "",
+      status: "",
+      busy: false,
+    };
+  } catch {
+    return { config: { url: "", anonKey: "" }, code: "", lastSyncedAt: "", status: "", busy: false };
+  }
+}
+
+function saveSyncState() {
+  localStorage.setItem(SYNC_CONFIG_KEY, JSON.stringify(state.sync.config));
+  localStorage.setItem(SYNC_STATE_KEY, JSON.stringify({ code: state.sync.code, lastSyncedAt: state.sync.lastSyncedAt }));
+}
+
+function syncConfigured() {
+  return Boolean(state.sync.config?.url && state.sync.config?.anonKey);
+}
+
+function setSyncStatus(message) {
+  state.sync.status = message;
+  const target = document.querySelector("[data-sync-status]");
+  if (target) target.textContent = message;
+}
+
+function bytesToBase64(bytes) {
+  const data = new Uint8Array(bytes);
+  const chunkSize = 0x8000;
+  let binary = "";
+  for (let index = 0; index < data.length; index += chunkSize) {
+    binary += String.fromCharCode(...data.subarray(index, index + chunkSize));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(value) {
+  return Uint8Array.from(atob(value), (char) => char.charCodeAt(0));
+}
+
+function randomSyncCode() {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").replace(/(.{6})/g, "$1-").replace(/-$/, "");
+}
+
+async function sha256Hex(value) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function syncIdForCode(code) {
+  return sha256Hex("workout-sync:" + code.trim());
+}
+
+async function deriveSyncKey(code, salt) {
+  const baseKey = await crypto.subtle.importKey("raw", new TextEncoder().encode(code.trim()), "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt, iterations: 120000, hash: "SHA-256" },
+    baseKey,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"],
+  );
+}
+
+async function encryptStoreForSync(store, code) {
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await deriveSyncKey(code, salt);
+  const data = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, new TextEncoder().encode(JSON.stringify(store)));
+  return { v: 1, salt: bytesToBase64(salt), iv: bytesToBase64(iv), data: bytesToBase64(data) };
+}
+
+async function decryptStoreFromSync(payload, code) {
+  const salt = base64ToBytes(payload.salt);
+  const iv = base64ToBytes(payload.iv);
+  const key = await deriveSyncKey(code, salt);
+  const decrypted = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, base64ToBytes(payload.data));
+  return JSON.parse(new TextDecoder().decode(decrypted));
+}
+
+function syncEndpoint(path = "") {
+  return state.sync.config.url.replace(/\/$/, "") + "/rest/v1/workout_sync" + path;
+}
+
+function syncHeaders(extra = {}) {
+  return {
+    apikey: state.sync.config.anonKey,
+    Authorization: "Bearer " + state.sync.config.anonKey,
+    "Content-Type": "application/json",
+    ...extra,
+  };
+}
+
+async function fetchRemoteSync(syncId) {
+  const response = await fetch(syncEndpoint() + "?sync_id=eq." + encodeURIComponent(syncId) + "&select=sync_id,payload,updated_at", {
+    headers: syncHeaders(),
+  });
+  if (!response.ok) throw new Error("Não foi possível consultar a sincronização.");
+  return (await response.json())[0] ?? null;
+}
+
+async function upsertRemoteSync(syncId, payload) {
+  const response = await fetch(syncEndpoint() + "?on_conflict=sync_id", {
+    method: "POST",
+    headers: syncHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
+    body: JSON.stringify({ sync_id: syncId, payload, updated_at: new Date().toISOString() }),
+  });
+  if (!response.ok) throw new Error("Não foi possível enviar os dados sincronizados.");
+  return (await response.json())[0] ?? null;
+}
+
+function replaceStoreFromSync(remoteStore) {
+  remoteStore.customPlans ??= [];
+  remoteStore.datePlanOverrides ??= {};
+  remoteStore.activePlan ??= makeDefaultActivePlan();
+  remoteStore.activePlan.days = (remoteStore.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
+  remoteStore.planArchive ??= [];
+  remoteStore.updatedAt ??= new Date().toISOString();
+  Object.entries(remoteStore.sessions ?? {}).forEach(([dateISO, session]) => normalizeSession(remoteStore, dateISO, session));
+  state.store = remoteStore;
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.store));
+}
+
+async function pushSync() {
+  if (!syncConfigured() || !state.sync.code) return false;
+  state.sync.busy = true;
+  setSyncStatus("Enviando dados...");
+  try {
+    const syncId = await syncIdForCode(state.sync.code);
+    const payload = await encryptStoreForSync(state.store, state.sync.code);
+    await upsertRemoteSync(syncId, payload);
+    state.sync.lastSyncedAt = new Date().toISOString();
+    saveSyncState();
+    setSyncStatus("Sincronizado agora.");
+    return true;
+  } catch (error) {
+    console.warn(error);
+    setSyncStatus("Não foi possível enviar. Confira a conexão do Supabase.");
+    return false;
+  } finally {
+    state.sync.busy = false;
+  }
+}
+
+async function pullSync({ onlyIfNewer = false, silent = false } = {}) {
+  if (!syncConfigured() || !state.sync.code) return false;
+  state.sync.busy = true;
+  if (!silent) setSyncStatus("Buscando dados...");
+  try {
+    const syncId = await syncIdForCode(state.sync.code);
+    const remote = await fetchRemoteSync(syncId);
+    if (!remote) {
+      if (!silent) setSyncStatus("Nenhum dado encontrado para este código.");
+      return false;
+    }
+    const remoteStore = await decryptStoreFromSync(remote.payload, state.sync.code);
+    const remoteTime = Date.parse(remoteStore.updatedAt ?? remote.updated_at ?? 0);
+    const localTime = Date.parse(state.store.updatedAt ?? 0);
+    if (onlyIfNewer && remoteTime <= localTime) return false;
+    replaceStoreFromSync(remoteStore);
+    state.sync.lastSyncedAt = new Date().toISOString();
+    saveSyncState();
+    if (!silent) setSyncStatus("Dados recebidos.");
+    render();
+    return true;
+  } catch (error) {
+    console.warn(error);
+    if (!silent) setSyncStatus("Não foi possível receber. Confira o código e a conexão.");
+    return false;
+  } finally {
+    state.sync.busy = false;
+  }
+}
+
+async function syncNow() {
+  if (!syncConfigured()) {
+    showToast("Configure o Supabase antes de sincronizar.");
+    return;
+  }
+  if (!state.sync.code) {
+    showToast("Crie ou informe um código de sincronização.");
+    return;
+  }
+  const pulled = await pullSync({ onlyIfNewer: true, silent: true });
+  if (!pulled) await pushSync();
+  showToast("Sincronização concluída.");
+}
+
+function scheduleAutoSync() {
+  if (!syncConfigured() || !state.sync.code) return;
+  clearTimeout(syncDebounceTimer);
+  syncDebounceTimer = setTimeout(() => {
+    pushSync();
+  }, 1800);
 }
 
 function getPlanForDate(dateISO = state.selectedDate) {
@@ -827,6 +1038,58 @@ function calculateStreak(sessions) {
   return streak;
 }
 
+function renderSyncCard() {
+  const configured = syncConfigured();
+  const connected = configured && state.sync.code;
+  const lastSync = state.sync.lastSyncedAt
+    ? new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" }).format(new Date(state.sync.lastSyncedAt))
+    : "ainda não sincronizado";
+  const status = escapeAttribute(state.sync.status);
+
+  if (!configured) {
+    return [
+      '<div class="data-card sync-card">',
+      '<div><h3>Configurar sincronização online</h3><p>Use o projeto gratuito do Supabase. Depois de salvar a conexão, o Workout usa um código secreto para manter os navegadores sincronizados.</p></div>',
+      '<div class="sync-fields">',
+      '<label><span>URL do projeto Supabase</span><input value="', escapeAttribute(state.sync.config.url), '" placeholder="https://xxxx.supabase.co" data-action="sync-config" data-field="url" /></label>',
+      '<label><span>Chave pública anon</span><input value="', escapeAttribute(state.sync.config.anonKey), '" placeholder="eyJ..." data-action="sync-config" data-field="anonKey" /></label>',
+      '<button class="secondary-button" type="button" data-action="save-sync-config">Salvar conexão</button>',
+      '</div>',
+      '<p class="sync-status" data-sync-status>', status, '</p>',
+      '</div>',
+    ].join("");
+  }
+
+  if (!connected) {
+    return [
+      '<div class="data-card sync-card">',
+      '<div><h3>Ligar navegadores</h3><p>Crie um código neste navegador ou cole o código criado em outro navegador. O código é a chave para criptografar seus dados.</p></div>',
+      '<div class="sync-fields">',
+      '<button class="secondary-button" type="button" data-action="create-sync-code">Criar código de sincronização</button>',
+      '<label><span>Entrar com código existente</span><input value="', escapeAttribute(state.sync.pendingCode ?? ""), '" placeholder="cole o código aqui" data-action="sync-code" /></label>',
+      '<button class="secondary-button" type="button" data-action="connect-sync-code">Conectar e receber dados</button>',
+      '<button class="ghost-button" type="button" data-action="disconnect-sync">Trocar conexão Supabase</button>',
+      '</div>',
+      '<p class="sync-status" data-sync-status>', status, '</p>',
+      '</div>',
+    ].join("");
+  }
+
+  return [
+    '<div class="data-card sync-card">',
+    '<div><h3>Sincronização ativa</h3><p>Última sincronização: ', escapeAttribute(lastSync), '. Use o mesmo código nos outros navegadores.</p></div>',
+    '<div class="sync-code-box"><span>Código secreto</span><strong>', escapeAttribute(state.sync.code), '</strong></div>',
+    '<div class="data-actions">',
+    '<button class="secondary-button" type="button" data-action="sync-now">Sincronizar agora</button>',
+    '<button class="secondary-button" type="button" data-action="pull-sync">Receber dados da nuvem</button>',
+    '<button class="secondary-button" type="button" data-action="copy-sync-code">Copiar código</button>',
+    '<button class="ghost-button" type="button" data-action="disconnect-sync">Desconectar</button>',
+    '</div>',
+    '<p class="sync-status" data-sync-status>', status, '</p>',
+    '</div>',
+  ].join("");
+}
+
 function renderProgress() {
   const sessions = completedSessions();
   const cardioDistances = sessions.map(([, session]) => Number(session.cardio?.distance) || 0).filter(Boolean);
@@ -866,6 +1129,10 @@ function renderProgress() {
             : `<div class="empty-card"><strong>Nenhum treino registrado</strong>Seu histórico aparecerá aqui após a primeira sessão.</div>`
         }
       </div>
+    </section>
+    <section class="section">
+      <div class="section-heading"><div><p class="eyebrow">Entre navegadores</p><h2>Sincronização</h2></div></div>
+      ${renderSyncCard()}
     </section>
     <section class="section">
       <div class="section-heading"><div><p class="eyebrow">Privacidade</p><h2>Seus dados</h2></div></div>
@@ -1234,6 +1501,15 @@ app.addEventListener("input", (event) => {
   const action = target.dataset.action;
   if (!action) return;
 
+  if (action === "sync-config") {
+    state.sync.config[target.dataset.field] = target.value.trim();
+    return;
+  }
+  if (action === "sync-code") {
+    state.sync.pendingCode = target.value.trim();
+    return;
+  }
+
   if (action === "sheet-field") {
     if (target.dataset.field === "count") {
       resizeSheetDays(target.value);
@@ -1364,10 +1640,77 @@ app.addEventListener("change", (event) => {
   requestAnimationFrame(() => window.scrollTo(0, scrollPosition));
 });
 
-app.addEventListener("click", (event) => {
+app.addEventListener("click", async (event) => {
   const target = event.target.closest("[data-action]");
   if (!target) return;
   const action = target.dataset.action;
+
+  if (action === "save-sync-config") {
+    saveSyncState();
+    renderProgress();
+    showToast(syncConfigured() ? "Conexão salva." : "Preencha URL e chave pública.");
+    return;
+  }
+
+  if (action === "create-sync-code") {
+    if (!syncConfigured()) {
+      showToast("Salve a conexão do Supabase primeiro.");
+      return;
+    }
+    state.sync.code = randomSyncCode();
+    state.sync.pendingCode = "";
+    saveSyncState();
+    renderProgress();
+    await pushSync();
+    showToast("Código criado e dados enviados.");
+    return;
+  }
+
+  if (action === "connect-sync-code") {
+    if (!syncConfigured()) {
+      showToast("Salve a conexão do Supabase primeiro.");
+      return;
+    }
+    if (!state.sync.pendingCode) {
+      showToast("Cole o código de sincronização.");
+      return;
+    }
+    state.sync.code = state.sync.pendingCode.trim();
+    saveSyncState();
+    const received = await pullSync();
+    showToast(received ? "Dados recebidos." : "Não encontrei dados para este código.");
+    return;
+  }
+
+  if (action === "sync-now") {
+    await syncNow();
+    return;
+  }
+
+  if (action === "pull-sync") {
+    const received = await pullSync();
+    showToast(received ? "Dados atualizados." : "Nada novo para receber.");
+    return;
+  }
+
+  if (action === "copy-sync-code") {
+    await navigator.clipboard?.writeText(state.sync.code);
+    showToast("Código copiado.");
+    return;
+  }
+
+  if (action === "disconnect-sync") {
+    const hadCode = Boolean(state.sync.code);
+    state.sync.code = "";
+    state.sync.pendingCode = "";
+    state.sync.lastSyncedAt = "";
+    state.sync.status = "";
+    if (!hadCode) state.sync.config = { url: "", anonKey: "" };
+    saveSyncState();
+    renderProgress();
+    showToast(hadCode ? "Sincronização desconectada." : "Conexão removida.");
+    return;
+  }
 
   if (action === "start-general-timer" || action === "pause-general-timer" || action === "reset-general-timer") {
     const session = getSession();

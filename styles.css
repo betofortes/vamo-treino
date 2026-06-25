@@ -546,6 +546,15 @@ h3 {
   line-height: 1.4;
 }
 
+.exercise-title .exercise-suggestion {
+  margin: 9px 0 0;
+}
+
+.exercise-suggestion.is-load-recommendation {
+  background: rgba(31, 107, 92, 0.08);
+  color: var(--teal);
+}
+
 .cardio-card {
   overflow: hidden;
   padding: 20px;

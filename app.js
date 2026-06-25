@@ -167,6 +167,57 @@ const exerciseCatalog = Array.from(
   ).values(),
 ).sort((a, b) => a.name.localeCompare(b.name, "pt-BR"));
 
+const DEFAULT_COACH_RECOMMENDATIONS = [
+  {
+    id: "seed-coach-2026-06-25-supino-inclinado-barra",
+    exerciseId: "supino-inclinado-barra",
+    exerciseName: "Supino inclinado com barra",
+    recommendationText: "Usar 40 kg como carga base. Meta próxima: 8/8/8/8. Só subir para 42,5 kg ou 45 kg depois de fechar todas as séries no topo da faixa.",
+  },
+  {
+    id: "seed-coach-2026-06-25-supino-maquina",
+    exerciseId: "supino-maquina",
+    exerciseName: "Supino na máquina",
+    recommendationText: "Usar 35 kg como carga base. Meta próxima: 10/9/8/8. Não usar 40 kg ainda como base, pois saiu abaixo da faixa.",
+  },
+  {
+    id: "seed-coach-2026-06-25-crossover-baixo",
+    exerciseId: "crossover-baixo",
+    exerciseName: "Crossover baixo",
+    recommendationText: "Manter 18 kg. Meta próxima: 15/15.",
+  },
+  {
+    id: "seed-coach-2026-06-25-desenvolvimento-militar",
+    exerciseId: "desenvolvimento-militar",
+    exerciseName: "Desenvolvimento militar",
+    recommendationText: "Usar 25 kg como carga base. Meta próxima: 8/8/7/6. Alternativa: 20/25/25/30 kg como progressão crescente.",
+  },
+  {
+    id: "seed-coach-2026-06-25-elevacao-lateral-qui",
+    exerciseId: "elevacao-lateral-qui",
+    exerciseName: "Elevação lateral",
+    recommendationText: "Manter 15 kg. Meta próxima: 15/15/13/13.",
+  },
+  {
+    id: "seed-coach-2026-06-25-crucifixo-inverso-qui",
+    exerciseId: "crucifixo-inverso-qui",
+    exerciseName: "Crucifixo inverso",
+    recommendationText: "Manter 80 kg. Meta próxima: 15/15/15.",
+  },
+  {
+    id: "seed-coach-2026-06-25-paralelas",
+    exerciseId: "paralelas",
+    exerciseName: "Paralelas",
+    recommendationText: "Registrar se a máquina é assistida ou carga contra o usuário. Manter o registro 50/84/104 kg — 15/15/10 até confirmar o tipo da máquina.",
+  },
+  {
+    id: "seed-coach-2026-06-25-triceps-corda-qui",
+    exerciseId: "triceps-corda-qui",
+    exerciseName: "Tríceps corda",
+    recommendationText: "Usar 60 kg como carga-base. Meta próxima: 10/10/10.",
+  },
+];
+
 const state = {
   view: "today",
   selectedDate: localISO(new Date()),
@@ -250,6 +301,55 @@ function findStoredPlan(store, planId, weekday) {
   return custom ?? archived ?? active ?? normalizePlanDay(workoutPlan[weekday], weekday);
 }
 
+function defaultExerciseDetails(plan) {
+  return Object.fromEntries(
+    (plan?.exercises ?? []).map((exercise) => [
+      exercise.id,
+      { performedName: "", substitutionReason: "", notes: "" },
+    ]),
+  );
+}
+
+function normalizeCoachRecommendation(recommendation) {
+  return {
+    id: recommendation.id ?? `coach-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    exerciseId: recommendation.exerciseId ?? "",
+    exerciseName: recommendation.exerciseName ?? "",
+    workoutSessionId: recommendation.workoutSessionId ?? recommendation.sourceDate ?? "",
+    sourceDate: recommendation.sourceDate ?? recommendation.workoutSessionId ?? "",
+    workoutTitle: recommendation.workoutTitle ?? "",
+    recommendationText: recommendation.recommendationText ?? "",
+    suggestedWeight: recommendation.suggestedWeight ?? "",
+    suggestedRepTarget: recommendation.suggestedRepTarget ?? "",
+    createdAt: recommendation.createdAt ?? new Date().toISOString(),
+    appliesToNextSession: recommendation.appliesToNextSession ?? true,
+    status: recommendation.status ?? "pending",
+    appliedAt: recommendation.appliedAt ?? "",
+    appliedSessionId: recommendation.appliedSessionId ?? "",
+    result: recommendation.result ?? "",
+    fulfilled: recommendation.fulfilled ?? null,
+  };
+}
+
+function ensureCoachStore(store) {
+  store.coachRecommendations ??= [];
+  store.coachRecommendations = store.coachRecommendations.map(normalizeCoachRecommendation);
+
+  DEFAULT_COACH_RECOMMENDATIONS.forEach((recommendation) => {
+    if (store.coachRecommendations.some((item) => item.id === recommendation.id)) return;
+    store.coachRecommendations.push(
+      normalizeCoachRecommendation({
+        ...recommendation,
+        workoutSessionId: "2026-06-25",
+        sourceDate: "2026-06-25",
+        workoutTitle: "Peito + Ombros + Tríceps",
+        createdAt: "2026-06-25T20:00:00-03:00",
+        status: "pending",
+      }),
+    );
+  });
+}
+
 function normalizeSession(store, dateISO, session) {
   const weekday = parseISO(dateISO).getDay();
   session.planId ??= `base-${weekday}`;
@@ -260,6 +360,16 @@ function normalizeSession(store, dateISO, session) {
   session.planSnapshot ??= cloneValue(findStoredPlan(store, session.planId, weekday));
   session.loadRecommendations ??= {};
   session.repRecommendations ??= {};
+  session.exerciseDetails ??= defaultExerciseDetails(session.planSnapshot);
+  (session.planSnapshot?.exercises ?? []).forEach((exercise) => {
+    session.exerciseDetails[exercise.id] ??= { performedName: "", substitutionReason: "", notes: "" };
+    session.exerciseDetails[exercise.id].performedName ??= "";
+    session.exerciseDetails[exercise.id].substitutionReason ??= "";
+    session.exerciseDetails[exercise.id].notes ??= "";
+  });
+  session.coachResponseText ??= "";
+  session.coachExerciseDrafts ??= {};
+  session.chatgptSummary ??= "";
   return session;
 }
 
@@ -271,6 +381,7 @@ function defaultStore() {
     datePlanOverrides: {},
     activePlan: makeDefaultActivePlan(),
     planArchive: [],
+    coachRecommendations: [],
     updatedAt: new Date().toISOString(),
   };
 
@@ -305,6 +416,7 @@ function defaultStore() {
     completedAt: "2026-06-23T20:00:00-03:00",
   };
 
+  ensureCoachStore(seed);
   return seed;
 }
 
@@ -318,6 +430,7 @@ function loadStore() {
       parsed.activePlan ??= makeDefaultActivePlan();
       parsed.activePlan.days = (parsed.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
       parsed.planArchive ??= [];
+      ensureCoachStore(parsed);
       parsed.updatedAt ??= new Date().toISOString();
       Object.entries(parsed.sessions ?? {}).forEach(([dateISO, session]) => {
         normalizeSession(parsed, dateISO, session);
@@ -467,6 +580,7 @@ function replaceStoreFromSync(remoteStore) {
   remoteStore.activePlan ??= makeDefaultActivePlan();
   remoteStore.activePlan.days = (remoteStore.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
   remoteStore.planArchive ??= [];
+  ensureCoachStore(remoteStore);
   remoteStore.updatedAt ??= new Date().toISOString();
   Object.entries(remoteStore.sessions ?? {}).forEach(([dateISO, session]) => normalizeSession(remoteStore, dateISO, session));
   state.store = remoteStore;
@@ -602,6 +716,10 @@ function makeBlankSession(dateISO) {
     planSnapshot: cloneValue(plan),
     loadRecommendations,
     repRecommendations,
+    exerciseDetails: defaultExerciseDetails(plan),
+    coachResponseText: "",
+    coachExerciseDrafts: {},
+    chatgptSummary: "",
     completedAt: null,
   };
 }
@@ -883,6 +1001,197 @@ function buildRepRecommendation(dateISO, exercise) {
   };
 }
 
+function coachRecommendationMatches(recommendation, exercise) {
+  return recommendation.exerciseId === exercise.id || normalizeExerciseLookup(recommendation.exerciseName) === normalizeExerciseLookup(exercise.name);
+}
+
+function activeCoachRecommendationForExercise(dateISO, exercise) {
+  return [...(state.store.coachRecommendations ?? [])]
+    .filter((recommendation) => recommendation.status === "pending")
+    .filter((recommendation) => recommendation.appliesToNextSession)
+    .filter((recommendation) => recommendation.sourceDate !== dateISO)
+    .filter((recommendation) => !recommendation.sourceDate || recommendation.sourceDate < dateISO)
+    .filter((recommendation) => coachRecommendationMatches(recommendation, exercise))
+    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
+}
+
+function nextDateWithExercise(fromDateISO, exercise) {
+  for (let offset = 1; offset <= 35; offset += 1) {
+    const dateISO = localISO(addDays(parseISO(fromDateISO), offset));
+    const plan = getPlanForDate(dateISO);
+    if (plan?.exercises?.some((candidate) => exerciseMatches(candidate, exercise))) return dateISO;
+  }
+  return "";
+}
+
+function formatSetList(sets, field) {
+  const values = sets.map((set) => String(set[field] ?? "").trim() || "—");
+  return values.length ? values.join(" / ") : "—";
+}
+
+function formatDoneCount(sets) {
+  return `${sets.filter((set) => set.done).length}/${sets.length}`;
+}
+
+function exerciseDetailFor(session, exercise) {
+  session.exerciseDetails ??= {};
+  session.exerciseDetails[exercise.id] ??= { performedName: "", substitutionReason: "", notes: "" };
+  return session.exerciseDetails[exercise.id];
+}
+
+function buildChatGPTSummary(dateISO, session) {
+  const plan = getPlanForSession(dateISO, session);
+  const cycle = getCycleInfo(dateISO);
+  const date = parseISO(dateISO);
+  const weekday = DAY_NAMES[date.getDay()];
+  const substitutions = [];
+  const exerciseBlocks = plan.exercises.map((exercise, index) => {
+    const logs = session.exerciseLogs?.[exercise.id] ?? [];
+    const detail = exerciseDetailFor(session, exercise);
+    const performedName = String(detail.performedName || exercise.name).trim();
+    if (performedName && performedName !== exercise.name) {
+      substitutions.push({
+        planned: exercise.name,
+        performed: performedName,
+        reason: detail.substitutionReason || detail.notes || "não informado",
+      });
+    }
+    return [
+      `${index + 1}. Nome do exercício: ${exercise.name}`,
+      `   Planejado: ${exercise.sets} séries · ${rangeLabel(exercise)} · ${exercise.rir}`,
+      `   Executado: ${performedName || exercise.name}`,
+      `   Séries: ${logs.length}`,
+      `   Carga por série: ${formatSetList(logs, "load")}`,
+      `   Repetições por série: ${formatSetList(logs, "reps")}`,
+      `   RIR alvo: ${exercise.rir}`,
+      `   Séries concluídas: ${formatDoneCount(logs)}`,
+      detail.notes ? `   Observação do exercício: ${detail.notes}` : "",
+    ].filter(Boolean).join("\n");
+  });
+
+  const cardioMinimum = Number(plan.cardio?.minimum ?? CARDIO_MINIMUM);
+  const cardioGoal = Number(plan.cardio?.goal ?? CARDIO_LONG_TERM);
+  const substitutionText = substitutions.length
+    ? substitutions.map((item) => [`Exercício planejado: ${item.planned}`, `Exercício executado: ${item.performed}`, `Motivo: ${item.reason}`].join("\n")).join("\n\n")
+    : "Sem substituições registradas.";
+  const notes = session.notes?.trim() || "Sem observações registradas.";
+
+  return [
+    "TREINO EXECUTADO",
+    "",
+    `Data: ${new Intl.DateTimeFormat("pt-BR").format(date)}`,
+    `Semana: ${cycle.week}`,
+    `Dia da semana: ${weekday}`,
+    `Grupo muscular: ${plan.title}`,
+    `Bloco da periodização: ${cycle.block} — ${cycle.blockLabel}`,
+    "",
+    "EXERCÍCIOS",
+    "",
+    exerciseBlocks.join("\n\n"),
+    "",
+    "CARDIO",
+    `Duração: ${session.cardio?.duration || plan.cardio?.duration || 12} min`,
+    `Distância: ${session.cardio?.distance || "não registrada"} m`,
+    `Velocidade média, se houver: ${session.cardio?.speed ? `${formatSpeed(session.cardio.speed)} km/h` : "não registrada"}`,
+    `Meta mínima: ${cardioMinimum.toLocaleString("pt-BR")} m`,
+    `Objetivo de longo prazo: ${cardioGoal.toLocaleString("pt-BR")} m`,
+    "",
+    "SUBSTITUIÇÕES",
+    substitutionText,
+    "",
+    "OBSERVAÇÕES",
+    `Como foi o treino: ${notes}`,
+    "Dificuldades: ",
+    "Dores ou desconfortos: ",
+    `Exercícios não realizados: ${plan.exercises.filter((exercise) => !(session.exerciseLogs?.[exercise.id] ?? []).some((set) => set.done)).map((exercise) => exercise.name).join(", ") || "nenhum"}`,
+  ].join("\n");
+}
+
+function makeCoachRecommendationFromDraft(dateISO, session, exercise, text) {
+  return normalizeCoachRecommendation({
+    id: `coach-${dateISO}-${exercise.id}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    exerciseId: exercise.id,
+    exerciseName: exercise.name,
+    workoutSessionId: dateISO,
+    sourceDate: dateISO,
+    workoutTitle: getPlanForSession(dateISO, session).title,
+    recommendationText: text.trim(),
+    createdAt: new Date().toISOString(),
+    status: "pending",
+  });
+}
+
+function saveCoachRecommendationsFromSession(dateISO = state.selectedDate) {
+  const session = getSession(dateISO);
+  const plan = getPlanForSession(dateISO, session);
+  const drafts = session.coachExerciseDrafts ?? {};
+  let saved = 0;
+
+  state.store.coachRecommendations = (state.store.coachRecommendations ?? []).filter(
+    (recommendation) => !(recommendation.sourceDate === dateISO && recommendation.id.startsWith(`coach-${dateISO}-`)),
+  );
+
+  const generalText = String(session.coachResponseText ?? "").trim();
+  if (generalText) {
+    state.store.coachRecommendations.push(
+      normalizeCoachRecommendation({
+        id: `coach-${dateISO}-geral-${Date.now()}`,
+        exerciseId: "",
+        exerciseName: "Geral do treino",
+        workoutSessionId: dateISO,
+        sourceDate: dateISO,
+        workoutTitle: plan.title,
+        recommendationText: generalText,
+        createdAt: new Date().toISOString(),
+        appliesToNextSession: false,
+        status: "applied",
+        result: "análise geral salva",
+      }),
+    );
+    saved += 1;
+  }
+
+  plan.exercises.forEach((exercise) => {
+    const text = String(drafts[exercise.id] ?? "").trim();
+    if (!text) return;
+    state.store.coachRecommendations.push(makeCoachRecommendationFromDraft(dateISO, session, exercise, text));
+    saved += 1;
+  });
+
+  return saved;
+}
+
+function classifyRecommendationResult(exercise, currentLogs, previousLogs = []) {
+  const completed = completedExerciseSets(currentLogs);
+  const previousCompleted = completedExerciseSets(previousLogs);
+  const currentReps = completed.reduce((sum, set) => sum + (Number(set.reps) || 0), 0);
+  const previousReps = previousCompleted.reduce((sum, set) => sum + (Number(set.reps) || 0), 0);
+  const currentBestLoad = Math.max(0, ...completed.map((set) => parseLoadValue(set.load) ?? 0));
+  const previousBestLoad = Math.max(0, ...previousCompleted.map((set) => parseLoadValue(set.load) ?? 0));
+  const topReached = exercise.maxReps ? completed.length >= Number(exercise.sets) && completed.every((set) => Number(set.reps) >= exercise.maxReps) : false;
+  const belowMinimum = exercise.minReps ? completed.some((set) => set.done && Number(set.reps) < exercise.minReps) : false;
+
+  if (!completed.length) return { result: "não avaliada", fulfilled: false };
+  if (currentBestLoad > previousBestLoad || currentReps > previousReps || topReached) return { result: "progressão", fulfilled: true };
+  if (belowMinimum || (previousReps && currentReps < previousReps)) return { result: "regressão", fulfilled: false };
+  return { result: "manutenção", fulfilled: true };
+}
+
+function applyCoachRecommendationsForSession(dateISO, session) {
+  const plan = getPlanForSession(dateISO, session);
+  plan.exercises.forEach((exercise) => {
+    const recommendation = activeCoachRecommendationForExercise(dateISO, exercise);
+    if (!recommendation) return;
+    const previous = latestPreviousExerciseRecord(dateISO, exercise);
+    const evaluation = classifyRecommendationResult(exercise, session.exerciseLogs?.[exercise.id] ?? [], previous?.logs ?? []);
+    recommendation.status = "applied";
+    recommendation.appliedAt = new Date().toISOString();
+    recommendation.appliedSessionId = dateISO;
+    recommendation.result = evaluation.result;
+    recommendation.fulfilled = evaluation.fulfilled;
+  });
+}
+
 function escapeAttribute(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -949,6 +1258,8 @@ function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
+  const coachRecommendation = activeCoachRecommendationForExercise(state.selectedDate, exercise);
+  const detail = exerciseDetailFor(session, exercise);
   const restTimer = getRestTimer(exercise);
 
   return `
@@ -962,6 +1273,11 @@ function renderExercise(exercise, index, session) {
             <span>${exercise.rir}</span>
           </div>
           <div class="previous-label">${previousSummary(state.selectedDate, exercise)}</div>
+          ${
+            coachRecommendation
+              ? `<div class="coach-recommendation-card"><span>Recomendação anterior</span><p>${escapeAttribute(coachRecommendation.recommendationText)}</p></div>`
+              : ""
+          }
           ${exercise.notes ? `<div class="exercise-plan-note">${escapeAttribute(exercise.notes)}</div>` : ""}
         </div>
       </div>
@@ -972,6 +1288,14 @@ function renderExercise(exercise, index, session) {
           <button type="button" data-action="reset-rest-timer" data-exercise="${exercise.id}">Reiniciar</button>
         </div>
       </div>
+      <details class="exercise-detail-panel">
+        <summary>Substituição / nota deste exercício</summary>
+        <div class="coach-fields">
+          <label><span>Executado como</span><input value="${escapeAttribute(detail.performedName)}" placeholder="${escapeAttribute(exercise.name)}" data-action="exercise-detail" data-exercise="${exercise.id}" data-field="performedName" /></label>
+          <label><span>Motivo da substituição</span><input value="${escapeAttribute(detail.substitutionReason)}" placeholder="Ex.: equipamento ocupado" data-action="exercise-detail" data-exercise="${exercise.id}" data-field="substitutionReason" /></label>
+          <label class="is-wide"><span>Observação do exercício</span><textarea data-action="exercise-detail" data-exercise="${exercise.id}" data-field="notes" placeholder="Técnica, dor, ajuste de máquina...">${escapeAttribute(detail.notes)}</textarea></label>
+        </div>
+      </details>
       <div class="series-grid is-header" aria-hidden="true">
         <span>Série</span>
         <span>Carga${exercise.loadUnit === "livre" ? "" : ` (${exercise.loadUnit})`}</span>
@@ -1034,6 +1358,51 @@ function renderExercise(exercise, index, session) {
           : ""
       }
     </article>
+  `;
+}
+
+function renderCoachSessionPanel(plan, session) {
+  const summary = session.chatgptSummary ?? "";
+  return `
+    <section class="section coach-session-section">
+      <div class="section-heading">
+        <div><p class="eyebrow">Coach / ChatGPT</p><h2>Acompanhamento inteligente</h2></div>
+      </div>
+      <div class="coach-card">
+        <div>
+          <h3>Resumo para enviar ao ChatGPT</h3>
+          <p>Gere um texto padronizado com cargas, repetições, cardio, substituições e observações do treino.</p>
+        </div>
+        <div class="data-actions">
+          <button class="secondary-button" type="button" data-action="generate-chatgpt-summary">Gerar resumo</button>
+          <button class="secondary-button" type="button" data-action="copy-chatgpt-summary">Copiar resumo</button>
+        </div>
+        <textarea class="coach-output" readonly placeholder="O resumo aparecerá aqui depois de gerar.">${escapeAttribute(summary)}</textarea>
+      </div>
+      <div class="coach-card">
+        <div>
+          <h3>Colar resposta do ChatGPT</h3>
+          <p>Cole a análise geral e, se quiser, separe abaixo a recomendação de cada exercício para aparecer no próximo treino.</p>
+        </div>
+        <textarea class="coach-output" data-action="coach-response" placeholder="Cole aqui a resposta geral do ChatGPT...">${escapeAttribute(session.coachResponseText)}</textarea>
+        <details class="coach-link-panel" open>
+          <summary>Vincular recomendações aos exercícios</summary>
+          <div class="coach-exercise-drafts">
+            ${plan.exercises
+              .map(
+                (exercise) => `
+                  <label>
+                    <span>${escapeAttribute(exercise.name)}</span>
+                    <textarea data-action="coach-exercise-draft" data-exercise="${exercise.id}" placeholder="Recomendação para o próximo treino deste exercício...">${escapeAttribute(session.coachExerciseDrafts?.[exercise.id] ?? "")}</textarea>
+                  </label>
+                `,
+              )
+              .join("")}
+          </div>
+        </details>
+        <button class="primary-button" type="button" data-action="save-coach-recommendations">Salvar recomendações do Coach</button>
+      </div>
+    </section>
   `;
 }
 
@@ -1160,6 +1529,7 @@ function renderToday() {
         <label for="session-notes">Observações e substituições</label>
         <textarea id="session-notes" placeholder="Como foi o treino? Trocou algum exercício?" data-action="notes">${escapeAttribute(session.notes)}</textarea>
       </div>
+      ${renderCoachSessionPanel(plan, session)}
       <button class="primary-button ${session.completedAt ? "is-saved" : ""}" type="button" data-action="finish-workout">
         ${session.completedAt ? `${checkIcon()} Treino salvo` : "Concluir e salvar treino"}
       </button>
@@ -1284,6 +1654,57 @@ function renderSyncCard() {
   ].join("");
 }
 
+function renderCoachRecommendationsSection() {
+  const recommendations = state.store.coachRecommendations ?? [];
+  const groups = {
+    pending: recommendations.filter((item) => item.status === "pending"),
+    applied: recommendations.filter((item) => item.status === "applied"),
+    ignored: recommendations.filter((item) => item.status === "ignored"),
+  };
+  const renderGroup = (title, items, emptyText) => `
+    <div class="coach-status-group">
+      <h3>${title}</h3>
+      ${
+        items.length
+          ? items
+              .slice()
+              .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+              .slice(0, 8)
+              .map((item) => {
+                const nextDate = item.status === "pending" && item.exerciseId ? nextDateWithExercise(item.sourceDate || state.selectedDate, { id: item.exerciseId, name: item.exerciseName }) : "";
+                return `
+                  <article class="coach-recommendation-item">
+                    <div>
+                      <strong>${escapeAttribute(item.exerciseName || "Recomendação geral")}</strong>
+                      <p>${escapeAttribute(item.recommendationText)}</p>
+                      <span>${item.status === "pending" && nextDate ? `Próximo uso: ${formatShortDate(nextDate).day}/${formatShortDate(nextDate).month}` : item.result ? `Resultado: ${item.result}` : "Registrada no histórico"}</span>
+                    </div>
+                    ${
+                      item.status === "pending"
+                        ? `<button class="ghost-button" type="button" data-action="ignore-coach-recommendation" data-id="${escapeAttribute(item.id)}">Ignorar</button>`
+                        : ""
+                    }
+                  </article>
+                `;
+              })
+              .join("")
+          : `<p class="coach-empty">${emptyText}</p>`
+      }
+    </div>
+  `;
+
+  return `
+    <section class="section">
+      <div class="section-heading"><div><p class="eyebrow">Coach</p><h2>Recomendações do Coach</h2></div></div>
+      <div class="coach-board">
+        ${renderGroup("Pendentes", groups.pending, "Nenhuma recomendação pendente.")}
+        ${renderGroup("Aplicadas", groups.applied, "Nenhuma recomendação aplicada ainda.")}
+        ${renderGroup("Ignoradas", groups.ignored, "Nenhuma recomendação ignorada.")}
+      </div>
+    </section>
+  `;
+}
+
 function renderProgress() {
   const sessions = completedSessions();
   const cardioDistances = sessions.map(([, session]) => Number(session.cardio?.distance) || 0).filter(Boolean);
@@ -1304,6 +1725,7 @@ function renderProgress() {
       <article class="metric-card"><span class="metric-label">Séries feitas</span><div class="metric-value">${totalSetsDone}</div><span class="metric-caption">séries concluídas</span></article>
       <article class="metric-card"><span class="metric-label">Melhor corrida</span><div class="metric-value">${bestDistance || "—"}</div><span class="metric-caption">${bestDistance ? `metros · ${bestPercent}% da meta` : "sem registro"}</span></article>
     </section>
+    ${renderCoachRecommendationsSection()}
     <section class="section">
       <div class="section-heading"><div><p class="eyebrow">Atividade</p><h2>Histórico recente</h2></div></div>
       <div class="history-list">
@@ -1756,6 +2178,15 @@ app.addEventListener("input", (event) => {
 
   if (action === "set-input") {
     session.exerciseLogs[target.dataset.exercise][Number(target.dataset.set)][target.dataset.field] = target.value;
+  } else if (action === "exercise-detail") {
+    session.exerciseDetails ??= {};
+    session.exerciseDetails[target.dataset.exercise] ??= { performedName: "", substitutionReason: "", notes: "" };
+    session.exerciseDetails[target.dataset.exercise][target.dataset.field] = target.value;
+  } else if (action === "coach-response") {
+    session.coachResponseText = target.value;
+  } else if (action === "coach-exercise-draft") {
+    session.coachExerciseDrafts ??= {};
+    session.coachExerciseDrafts[target.dataset.exercise] = target.value;
   } else if (action === "cardio") {
     session.cardio[target.dataset.field] = target.value;
   } else if (action === "notes") {
@@ -1808,6 +2239,7 @@ app.addEventListener("change", (event) => {
         imported.activePlan ??= makeDefaultActivePlan();
         imported.activePlan.days = (imported.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
         imported.planArchive ??= [];
+        ensureCoachStore(imported);
         Object.entries(imported.sessions).forEach(([dateISO, session]) => {
           normalizeSession(imported, dateISO, session);
         });
@@ -1906,6 +2338,45 @@ app.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "generate-chatgpt-summary") {
+    const session = getSession();
+    session.chatgptSummary = buildChatGPTSummary(state.selectedDate, session);
+    persist();
+    renderToday();
+    showToast("Resumo gerado para o ChatGPT.");
+    return;
+  }
+
+  if (action === "copy-chatgpt-summary") {
+    const session = getSession();
+    if (!session.chatgptSummary) session.chatgptSummary = buildChatGPTSummary(state.selectedDate, session);
+    await navigator.clipboard?.writeText(session.chatgptSummary);
+    persist();
+    renderToday();
+    showToast("Resumo copiado.");
+    return;
+  }
+
+  if (action === "save-coach-recommendations") {
+    const saved = saveCoachRecommendationsFromSession();
+    persist();
+    renderToday();
+    showToast(saved ? `${saved} recomendações salvas para o próximo treino.` : "Preencha pelo menos uma recomendação por exercício.");
+    return;
+  }
+
+  if (action === "ignore-coach-recommendation") {
+    const recommendation = state.store.coachRecommendations?.find((item) => item.id === target.dataset.id);
+    if (recommendation) {
+      recommendation.status = "ignored";
+      recommendation.appliedAt = new Date().toISOString();
+      persist();
+      renderProgress();
+      showToast("Recomendação ignorada.");
+    }
+    return;
+  }
+
   if (action === "start-general-timer" || action === "pause-general-timer" || action === "reset-general-timer") {
     const session = getSession();
     if (action === "start-general-timer" && !session.timer.running) {
@@ -1969,6 +2440,7 @@ app.addEventListener("click", async (event) => {
     }
     session.totalDuration = Math.round(generalElapsed(session));
     session.completedAt = new Date().toISOString();
+    applyCoachRecommendationsForSession(state.selectedDate, session);
     persist();
     renderToday();
     showToast("Treino salvo no seu histórico.");

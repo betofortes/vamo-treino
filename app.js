@@ -949,8 +949,6 @@ function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
-  const loadRecommendation = session.loadRecommendations?.[exercise.id];
-  const repRecommendation = session.repRecommendations?.[exercise.id];
   const restTimer = getRestTimer(exercise);
 
   return `
@@ -964,8 +962,6 @@ function renderExercise(exercise, index, session) {
             <span>${exercise.rir}</span>
           </div>
           <div class="previous-label">${previousSummary(state.selectedDate, exercise)}</div>
-          ${loadRecommendation && !isComplete ? `<div class="exercise-suggestion is-load-recommendation"><span>↗</span><span>${escapeAttribute(loadRecommendation.message)}</span></div>` : ""}
-          ${repRecommendation && !isComplete ? `<div class="exercise-suggestion is-rep-recommendation"><span>◎</span><span>${escapeAttribute(repRecommendation.message)}</span></div>` : ""}
           ${exercise.notes ? `<div class="exercise-plan-note">${escapeAttribute(exercise.notes)}</div>` : ""}
         </div>
       </div>

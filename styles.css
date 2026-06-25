@@ -555,6 +555,11 @@ h3 {
   color: var(--teal);
 }
 
+.exercise-suggestion.is-rep-recommendation {
+  background: rgba(216, 255, 101, 0.28);
+  color: #405024;
+}
+
 .cardio-card {
   overflow: hidden;
   padding: 20px;

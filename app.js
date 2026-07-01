@@ -1,6 +1,35 @@
 const STORAGE_KEY = "vamo-training-v1";
 const SYNC_CONFIG_KEY = "workout-sync-config-v1";
 const SYNC_STATE_KEY = "workout-sync-state-v1";
+const DEFAULT_SYNC_CONFIG = { url: "", anonKey: "" };
+const AUTO_SYNC_INTERVAL_MS = 45000;
+const SYNC_SCHEMA_SQL = `create table if not exists public.workout_sync (
+  sync_id text primary key,
+  payload jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table public.workout_sync enable row level security;
+
+drop policy if exists "workout_sync_read" on public.workout_sync;
+drop policy if exists "workout_sync_insert" on public.workout_sync;
+drop policy if exists "workout_sync_update" on public.workout_sync;
+
+create policy "workout_sync_read"
+on public.workout_sync for select
+to anon
+using (true);
+
+create policy "workout_sync_insert"
+on public.workout_sync for insert
+to anon
+with check (true);
+
+create policy "workout_sync_update"
+on public.workout_sync for update
+to anon
+using (true)
+with check (true);`;
 const CYCLE_START = "2026-06-22";
 const CARDIO_MINIMUM = 1400;
 const CARDIO_LONG_TERM = 2400;
@@ -233,6 +262,8 @@ const toast = document.querySelector("#toast");
 let toastTimer;
 let timerTicker;
 let syncDebounceTimer;
+let autoSyncTimer;
+let autoSyncListenersAttached = false;
 
 function localISO(date) {
   const year = date.getFullYear();
@@ -461,14 +492,15 @@ function loadSyncState() {
     const config = JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY) || "null");
     const saved = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || "null");
     return {
-      config: config ?? { url: "", anonKey: "" },
+      config: { ...DEFAULT_SYNC_CONFIG, ...(config ?? {}) },
       code: saved?.code ?? "",
+      pendingCode: "",
       lastSyncedAt: saved?.lastSyncedAt ?? "",
       status: "",
       busy: false,
     };
   } catch {
-    return { config: { url: "", anonKey: "" }, code: "", lastSyncedAt: "", status: "", busy: false };
+    return { config: { ...DEFAULT_SYNC_CONFIG }, code: "", pendingCode: "", lastSyncedAt: "", status: "", busy: false };
   }
 }
 
@@ -556,11 +588,25 @@ function syncHeaders(extra = {}) {
   };
 }
 
+async function syncErrorMessage(response, fallback) {
+  const details = await response.text().catch(() => "");
+  if (response.status === 404) {
+    return "A tabela workout_sync ainda não existe no Supabase. Copie o modelo de tabela no app e rode no SQL Editor.";
+  }
+  if (response.status === 401 || response.status === 403) {
+    return "O Supabase recusou a conexão. Confira a URL, a chave anon e as permissões da tabela workout_sync.";
+  }
+  if (details.includes("row-level security")) {
+    return "O Supabase bloqueou por permissão. Rode o modelo de tabela completo para liberar a sincronização criptografada.";
+  }
+  return fallback;
+}
+
 async function fetchRemoteSync(syncId) {
   const response = await fetch(syncEndpoint() + "?sync_id=eq." + encodeURIComponent(syncId) + "&select=sync_id,payload,updated_at", {
     headers: syncHeaders(),
   });
-  if (!response.ok) throw new Error("Não foi possível consultar a sincronização.");
+  if (!response.ok) throw new Error(await syncErrorMessage(response, "Não foi possível consultar a sincronização."));
   return (await response.json())[0] ?? null;
 }
 
@@ -570,7 +616,7 @@ async function upsertRemoteSync(syncId, payload) {
     headers: syncHeaders({ Prefer: "resolution=merge-duplicates,return=representation" }),
     body: JSON.stringify({ sync_id: syncId, payload, updated_at: new Date().toISOString() }),
   });
-  if (!response.ok) throw new Error("Não foi possível enviar os dados sincronizados.");
+  if (!response.ok) throw new Error(await syncErrorMessage(response, "Não foi possível enviar os dados sincronizados."));
   return (await response.json())[0] ?? null;
 }
 
@@ -601,7 +647,7 @@ async function pushSync() {
     return true;
   } catch (error) {
     console.warn(error);
-    setSyncStatus("Não foi possível enviar. Confira a conexão do Supabase.");
+    setSyncStatus(error.message || "Não foi possível enviar. Confira a conexão do Supabase.");
     return false;
   } finally {
     state.sync.busy = false;
@@ -622,7 +668,10 @@ async function pullSync({ onlyIfNewer = false, silent = false } = {}) {
     const remoteStore = await decryptStoreFromSync(remote.payload, state.sync.code);
     const remoteTime = Date.parse(remoteStore.updatedAt ?? remote.updated_at ?? 0);
     const localTime = Date.parse(state.store.updatedAt ?? 0);
-    if (onlyIfNewer && remoteTime <= localTime) return false;
+    if (onlyIfNewer && remoteTime <= localTime) {
+      if (!silent) setSyncStatus("Este navegador já está atualizado.");
+      return false;
+    }
     replaceStoreFromSync(remoteStore);
     state.sync.lastSyncedAt = new Date().toISOString();
     saveSyncState();
@@ -631,7 +680,7 @@ async function pullSync({ onlyIfNewer = false, silent = false } = {}) {
     return true;
   } catch (error) {
     console.warn(error);
-    if (!silent) setSyncStatus("Não foi possível receber. Confira o código e a conexão.");
+    if (!silent) setSyncStatus(error.message || "Não foi possível receber. Confira o código e a conexão.");
     return false;
   } finally {
     state.sync.busy = false;
@@ -658,6 +707,33 @@ function scheduleAutoSync() {
   syncDebounceTimer = setTimeout(() => {
     pushSync();
   }, 1800);
+}
+
+function pullSyncInBackground() {
+  if (!syncConfigured() || !state.sync.code || state.sync.busy) return;
+  pullSync({ onlyIfNewer: true, silent: true });
+}
+
+function startAutoSync() {
+  clearInterval(autoSyncTimer);
+  if (!syncConfigured() || !state.sync.code) return;
+
+  if (!autoSyncListenersAttached) {
+    autoSyncListenersAttached = true;
+    window.addEventListener("focus", pullSyncInBackground);
+    window.addEventListener("online", pullSyncInBackground);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "visible") pullSyncInBackground();
+    });
+  }
+
+  autoSyncTimer = window.setInterval(pullSyncInBackground, AUTO_SYNC_INTERVAL_MS);
+  window.setTimeout(pullSyncInBackground, 900);
+}
+
+function stopAutoSync() {
+  clearInterval(autoSyncTimer);
+  clearTimeout(syncDebounceTimer);
 }
 
 function getPlanForDate(dateISO = state.selectedDate) {
@@ -1039,6 +1115,158 @@ function exerciseDetailFor(session, exercise) {
   return session.exerciseDetails[exercise.id];
 }
 
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function coachSearchText(value) {
+  return normalizeExerciseLookup(value)
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function stripCoachListPrefix(line) {
+  return String(line ?? "")
+    .replace(/^\s*(?:[-*•]+|\d{1,2}[\).:-])\s*/, "")
+    .replace(/^\s*(?:exercício|exercicio|recomendação|recomendacao)\s*\d*\s*[:.-]\s*/i, "")
+    .trim();
+}
+
+function coachExerciseMatchScore(line, exercise) {
+  const lineText = coachSearchText(stripCoachListPrefix(line));
+  const target = coachSearchText(exercise.name);
+  if (!lineText || !target) return 0;
+  if (lineText === target) return 100;
+  if (lineText.startsWith(`${target} `)) return 95;
+  if (lineText.includes(target)) return 85;
+
+  const tokens = target.split(" ").filter((token) => token.length > 2);
+  if (tokens.length < 2 || lineText.length > 140) return 0;
+  const hits = tokens.filter((token) => lineText.includes(token)).length;
+  if (hits === tokens.length) return 70;
+  if (tokens.length >= 3 && hits >= Math.ceil(tokens.length * 0.75)) return 55;
+  return 0;
+}
+
+function exerciseFromCoachLine(line, plan) {
+  if (!String(line ?? "").trim()) return null;
+  const matches = (plan.exercises ?? [])
+    .map((exercise) => ({ exercise, score: coachExerciseMatchScore(line, exercise) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || b.exercise.name.length - a.exercise.name.length);
+  if (!matches.length) return null;
+  if (matches[1] && matches[0].score === matches[1].score) return null;
+  return matches[0].exercise;
+}
+
+function isCoachGeneralHeading(line) {
+  const text = coachSearchText(stripCoachListPrefix(line));
+  if (!text || text.length > 80) return false;
+  return [
+    "analise geral",
+    "resumo geral",
+    "recomendacoes gerais",
+    "recomendacoes por exercicio",
+    "observacoes gerais",
+    "consideracoes finais",
+    "cardio",
+    "corrida",
+    "cuidados",
+    "proximo treino",
+  ].some((heading) => text === heading || text.startsWith(`${heading} `));
+}
+
+function cleanCoachRecommendationText(block, exercise) {
+  const lines = String(block ?? "").trim().split("\n");
+  if (!lines.length) return "";
+  const firstLine = lines[0] ?? "";
+  const exactName = new RegExp(`^\\s*(?:[-*•]+\\s*)?(?:\\d{1,2}[\\).:-]\\s*)?(?:exercício\\s*)?${escapeRegExp(exercise.name)}\\s*[:–—-]?\\s*`, "i");
+  lines[0] = firstLine.replace(exactName, "").trim();
+  return lines
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function splitNumberedCoachBlocks(text) {
+  const blocks = [];
+  let current = null;
+  String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .forEach((line) => {
+      const numbered = line.match(/^\s*(\d{1,2})[\).:-]\s+/);
+      if (numbered) {
+        if (current) blocks.push(current);
+        current = { number: Number(numbered[1]), lines: [line] };
+        return;
+      }
+      if (current) current.lines.push(line);
+    });
+  if (current) blocks.push(current);
+  return blocks.filter((block, index) => block.number === index + 1).map((block) => block.lines.join("\n").trim()).filter(Boolean);
+}
+
+function parseCoachRecommendationsFromText(text, plan) {
+  const source = String(text ?? "").trim();
+  const parsed = { generalText: "", items: [] };
+  if (!source || !plan?.exercises?.length) return parsed;
+
+  const generalLines = [];
+  const sections = [];
+  let current = null;
+
+  source
+    .replace(/\r\n/g, "\n")
+    .split("\n")
+    .forEach((line) => {
+      const exercise = exerciseFromCoachLine(line, plan);
+      if (exercise) {
+        current = { exercise, lines: [line] };
+        sections.push(current);
+        return;
+      }
+      if (isCoachGeneralHeading(line)) {
+        current = null;
+        generalLines.push(line);
+        return;
+      }
+      if (current) current.lines.push(line);
+      else generalLines.push(line);
+    });
+
+  const byExercise = new Map();
+  sections.forEach((section) => {
+    const textForExercise = cleanCoachRecommendationText(section.lines.join("\n"), section.exercise);
+    if (!textForExercise) return;
+    const existing = byExercise.get(section.exercise.id);
+    if (existing) {
+      existing.recommendationText = `${existing.recommendationText}\n\n${textForExercise}`;
+    } else {
+      byExercise.set(section.exercise.id, {
+        exercise: section.exercise,
+        recommendationText: textForExercise,
+      });
+    }
+  });
+
+  if (!byExercise.size) {
+    splitNumberedCoachBlocks(source)
+      .slice(0, plan.exercises.length)
+      .forEach((block, index) => {
+        const exercise = plan.exercises[index];
+        const textForExercise = cleanCoachRecommendationText(block, exercise) || block;
+        if (!textForExercise.trim()) return;
+        byExercise.set(exercise.id, { exercise, recommendationText: textForExercise.trim() });
+      });
+  }
+
+  parsed.generalText = generalLines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  parsed.items = [...byExercise.values()];
+  return parsed;
+}
+
 function buildChatGPTSummary(dateISO, session) {
   const plan = getPlanForSession(dateISO, session);
   const cycle = getCycleInfo(dateISO);
@@ -1104,6 +1332,17 @@ function buildChatGPTSummary(dateISO, session) {
     "Dificuldades: ",
     "Dores ou desconfortos: ",
     `Exercícios não realizados: ${plan.exercises.filter((exercise) => !(session.exerciseLogs?.[exercise.id] ?? []).some((set) => set.done)).map((exercise) => exercise.name).join(", ") || "nenhum"}`,
+    "",
+    "PEDIDO PARA O PRÓXIMO TREINO",
+    "Gere recomendações práticas de carga e repetições para o próximo treino.",
+    "Use exatamente este formato para eu colar a resposta no app Workout:",
+    "",
+    "ANÁLISE GERAL",
+    "Resumo curto do que evoluiu, do que manter e dos cuidados.",
+    "",
+    "RECOMENDAÇÕES POR EXERCÍCIO",
+    "Nome exato do exercício: carga recomendada, meta de repetições e observação objetiva.",
+    "Use um item separado para cada exercício e repita o nome exatamente como aparece acima.",
   ].join("\n");
 }
 
@@ -1124,7 +1363,6 @@ function makeCoachRecommendationFromDraft(dateISO, session, exercise, text) {
 function saveCoachRecommendationsFromSession(dateISO = state.selectedDate) {
   const session = getSession(dateISO);
   const plan = getPlanForSession(dateISO, session);
-  const drafts = session.coachExerciseDrafts ?? {};
   let saved = 0;
 
   state.store.coachRecommendations = (state.store.coachRecommendations ?? []).filter(
@@ -1132,6 +1370,7 @@ function saveCoachRecommendationsFromSession(dateISO = state.selectedDate) {
   );
 
   const generalText = String(session.coachResponseText ?? "").trim();
+  const parsed = parseCoachRecommendationsFromText(generalText, plan);
   if (generalText) {
     state.store.coachRecommendations.push(
       normalizeCoachRecommendation({
@@ -1141,18 +1380,17 @@ function saveCoachRecommendationsFromSession(dateISO = state.selectedDate) {
         workoutSessionId: dateISO,
         sourceDate: dateISO,
         workoutTitle: plan.title,
-        recommendationText: generalText,
+        recommendationText: parsed.generalText || "Resposta completa do ChatGPT salva neste treino.",
         createdAt: new Date().toISOString(),
         appliesToNextSession: false,
         status: "applied",
         result: "análise geral salva",
       }),
     );
-    saved += 1;
   }
 
-  plan.exercises.forEach((exercise) => {
-    const text = String(drafts[exercise.id] ?? "").trim();
+  parsed.items.forEach(({ exercise, recommendationText }) => {
+    const text = String(recommendationText ?? "").trim();
     if (!text) return;
     state.store.coachRecommendations.push(makeCoachRecommendationFromDraft(dateISO, session, exercise, text));
     saved += 1;
@@ -1363,6 +1601,13 @@ function renderExercise(exercise, index, session) {
 
 function renderCoachSessionPanel(plan, session) {
   const summary = session.chatgptSummary ?? "";
+  const parsed = parseCoachRecommendationsFromText(session.coachResponseText, plan);
+  const detectedExercises = parsed.items.map((item) => item.exercise.name);
+  const detectionText = session.coachResponseText?.trim()
+    ? detectedExercises.length
+      ? `${detectedExercises.length} recomendação(ões) detectada(s): ${detectedExercises.join(", ")}.`
+      : "Ainda não encontrei nomes de exercícios no texto. Peça ao ChatGPT para usar os nomes exatamente como aparecem no resumo."
+    : "Depois de colar a resposta, o app mostrará aqui quais exercícios foram identificados.";
   return `
     <section class="section coach-session-section">
       <div class="section-heading">
@@ -1382,24 +1627,12 @@ function renderCoachSessionPanel(plan, session) {
       <div class="coach-card">
         <div>
           <h3>Colar resposta do ChatGPT</h3>
-          <p>Cole a análise geral e, se quiser, separe abaixo a recomendação de cada exercício para aparecer no próximo treino.</p>
+          <p>Cole a resposta completa em um único campo. O Workout separa automaticamente as recomendações por exercício.</p>
         </div>
-        <textarea class="coach-output" data-action="coach-response" placeholder="Cole aqui a resposta geral do ChatGPT...">${escapeAttribute(session.coachResponseText)}</textarea>
-        <details class="coach-link-panel" open>
-          <summary>Vincular recomendações aos exercícios</summary>
-          <div class="coach-exercise-drafts">
-            ${plan.exercises
-              .map(
-                (exercise) => `
-                  <label>
-                    <span>${escapeAttribute(exercise.name)}</span>
-                    <textarea data-action="coach-exercise-draft" data-exercise="${exercise.id}" placeholder="Recomendação para o próximo treino deste exercício...">${escapeAttribute(session.coachExerciseDrafts?.[exercise.id] ?? "")}</textarea>
-                  </label>
-                `,
-              )
-              .join("")}
-          </div>
-        </details>
+        <textarea class="coach-output" data-action="coach-response" placeholder="Cole aqui a resposta completa do ChatGPT. Ex.: Supino reto com barra: manter 40 kg e buscar 8/8/8/8...">${escapeAttribute(session.coachResponseText)}</textarea>
+        <div class="coach-detection ${detectedExercises.length ? "has-items" : ""}" data-coach-detection>
+          <span>${escapeAttribute(detectionText)}</span>
+        </div>
         <button class="primary-button" type="button" data-action="save-coach-recommendations">Salvar recomendações do Coach</button>
       </div>
     </section>
@@ -1613,12 +1846,17 @@ function renderSyncCard() {
   if (!configured) {
     return [
       '<div class="data-card sync-card">',
-      '<div><h3>Configurar sincronização online</h3><p>Use o projeto gratuito do Supabase. Depois de salvar a conexão, o Workout usa um código secreto para manter os navegadores sincronizados.</p></div>',
+      '<div><h3>Configurar sincronização online</h3><p>Use um projeto Supabase e cole aqui a URL e a chave pública anon. O Workout usa um código secreto para criptografar os dados antes de enviar.</p></div>',
       '<div class="sync-fields">',
       '<label><span>URL do projeto Supabase</span><input value="', escapeAttribute(state.sync.config.url), '" placeholder="https://xxxx.supabase.co" data-action="sync-config" data-field="url" /></label>',
       '<label><span>Chave pública anon</span><input value="', escapeAttribute(state.sync.config.anonKey), '" placeholder="eyJ..." data-action="sync-config" data-field="anonKey" /></label>',
       '<button class="secondary-button" type="button" data-action="save-sync-config">Salvar conexão</button>',
       '</div>',
+      '<details class="sync-setup"><summary>Preparar tabela no Supabase</summary>',
+      '<p>Rode este modelo uma única vez no SQL Editor do Supabase. Depois volte aqui e salve a conexão.</p>',
+      '<textarea readonly>', escapeAttribute(SYNC_SCHEMA_SQL), '</textarea>',
+      '<button class="secondary-button" type="button" data-action="copy-sync-sql">Copiar modelo da tabela</button>',
+      '</details>',
       '<p class="sync-status" data-sync-status>', status, '</p>',
       '</div>',
     ].join("");
@@ -1641,7 +1879,7 @@ function renderSyncCard() {
 
   return [
     '<div class="data-card sync-card">',
-    '<div><h3>Sincronização ativa</h3><p>Última sincronização: ', escapeAttribute(lastSync), '. Use o mesmo código nos outros navegadores.</p></div>',
+    '<div><h3>Sincronização ativa</h3><p>Última sincronização: ', escapeAttribute(lastSync), '. O app sincroniza ao abrir, ao voltar para a aba e depois de salvar alterações.</p></div>',
     '<div class="sync-code-box"><span>Código secreto</span><strong>', escapeAttribute(state.sync.code), '</strong></div>',
     '<div class="data-actions">',
     '<button class="secondary-button" type="button" data-action="sync-now">Sincronizar agora</button>',
@@ -2184,6 +2422,16 @@ app.addEventListener("input", (event) => {
     session.exerciseDetails[target.dataset.exercise][target.dataset.field] = target.value;
   } else if (action === "coach-response") {
     session.coachResponseText = target.value;
+    const plan = getPlanForSession(state.selectedDate, session);
+    const parsed = parseCoachRecommendationsFromText(session.coachResponseText, plan);
+    const detectedExercises = parsed.items.map((item) => item.exercise.name);
+    const detection = document.querySelector("[data-coach-detection]");
+    if (detection) {
+      detection.classList.toggle("has-items", detectedExercises.length > 0);
+      detection.querySelector("span").textContent = detectedExercises.length
+        ? `${detectedExercises.length} recomendação(ões) detectada(s): ${detectedExercises.join(", ")}.`
+        : "Ainda não encontrei nomes de exercícios no texto. Peça ao ChatGPT para usar os nomes exatamente como aparecem no resumo.";
+    }
   } else if (action === "coach-exercise-draft") {
     session.coachExerciseDrafts ??= {};
     session.coachExerciseDrafts[target.dataset.exercise] = target.value;
@@ -2274,7 +2522,14 @@ app.addEventListener("click", async (event) => {
   if (action === "save-sync-config") {
     saveSyncState();
     renderProgress();
+    startAutoSync();
     showToast(syncConfigured() ? "Conexão salva." : "Preencha URL e chave pública.");
+    return;
+  }
+
+  if (action === "copy-sync-sql") {
+    await navigator.clipboard?.writeText(SYNC_SCHEMA_SQL);
+    showToast("Modelo da tabela copiado.");
     return;
   }
 
@@ -2288,6 +2543,7 @@ app.addEventListener("click", async (event) => {
     saveSyncState();
     renderProgress();
     await pushSync();
+    startAutoSync();
     showToast("Código criado e dados enviados.");
     return;
   }
@@ -2304,6 +2560,7 @@ app.addEventListener("click", async (event) => {
     state.sync.code = state.sync.pendingCode.trim();
     saveSyncState();
     const received = await pullSync();
+    startAutoSync();
     showToast(received ? "Dados recebidos." : "Não encontrei dados para este código.");
     return;
   }
@@ -2333,6 +2590,7 @@ app.addEventListener("click", async (event) => {
     state.sync.status = "";
     if (!hadCode) state.sync.config = { url: "", anonKey: "" };
     saveSyncState();
+    stopAutoSync();
     renderProgress();
     showToast(hadCode ? "Sincronização desconectada." : "Conexão removida.");
     return;
@@ -2358,10 +2616,18 @@ app.addEventListener("click", async (event) => {
   }
 
   if (action === "save-coach-recommendations") {
+    const session = getSession();
+    const hasCoachText = Boolean(String(session.coachResponseText ?? "").trim());
     const saved = saveCoachRecommendationsFromSession();
     persist();
     renderToday();
-    showToast(saved ? `${saved} recomendações salvas para o próximo treino.` : "Preencha pelo menos uma recomendação por exercício.");
+    showToast(
+      saved
+        ? `${saved} recomendações separadas para o próximo treino.`
+        : hasCoachText
+          ? "Não encontrei exercícios no texto. Use os nomes exatos do resumo."
+          : "Cole a resposta do ChatGPT antes de salvar.",
+    );
     return;
   }
 
@@ -2722,3 +2988,4 @@ if ("serviceWorker" in navigator) {
 }
 
 render();
+startAutoSync();

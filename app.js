@@ -880,8 +880,10 @@ function ensureLoadRecommendations(dateISO, session, plan) {
   session.repRecommendations ??= {};
 
   plan.exercises.forEach((exercise) => {
-    const loadRecommendation = session.loadRecommendations[exercise.id] ?? buildLoadRecommendation(dateISO, exercise);
-    const repRecommendation = session.repRecommendations[exercise.id] ?? buildRepRecommendation(dateISO, exercise);
+    const storedLoadRecommendation = session.loadRecommendations[exercise.id];
+    const storedRepRecommendation = session.repRecommendations[exercise.id];
+    const loadRecommendation = buildLoadRecommendation(dateISO, exercise);
+    const repRecommendation = buildRepRecommendation(dateISO, exercise);
     if (loadRecommendation) session.loadRecommendations[exercise.id] = loadRecommendation;
     if (repRecommendation) session.repRecommendations[exercise.id] = repRecommendation;
 
@@ -890,8 +892,14 @@ function ensureLoadRecommendations(dateISO, session, plan) {
     logs.forEach((set, index) => {
       const currentLoad = String(set.load ?? "").trim();
       const defaultLoad = String(exercise.defaultLoad ?? "").trim();
-      const canReplaceLoad = loadRecommendation && !set.done && (!currentLoad || currentLoad === defaultLoad);
-      const canReplaceReps = repRecommendation && !set.done && !set.reps;
+      const storedLoad = storedLoadRecommendation?.loads?.[index] ?? storedLoadRecommendation?.loads?.[storedLoadRecommendation.loads.length - 1] ?? "";
+      const storedReps = storedRepRecommendation?.reps?.[index] ?? storedRepRecommendation?.reps?.[storedRepRecommendation.reps.length - 1] ?? "";
+      const looksLikeCombinedLoad = /\d\s*\/\s*\d/.test(currentLoad);
+      const canReplaceLoad =
+        loadRecommendation &&
+        !set.done &&
+        (!currentLoad || currentLoad === defaultLoad || looksLikeCombinedLoad || (storedLoad && currentLoad === String(storedLoad).trim()));
+      const canReplaceReps = repRecommendation && !set.done && (!set.reps || (storedReps && String(set.reps).trim() === String(storedReps).trim()));
       if (canReplaceLoad) set.load = loadRecommendation.loads?.[index] ?? loadRecommendation.loads?.[loadRecommendation.loads.length - 1] ?? currentLoad;
       if (canReplaceReps) set.reps = repRecommendation.reps?.[index] ?? repRecommendation.reps?.[repRecommendation.reps.length - 1] ?? "";
     });
@@ -1157,15 +1165,12 @@ function buildLoadRecommendation(dateISO, exercise) {
   const completed = completedExerciseSets(record.logs);
   if (!completed.length) return null;
 
-  const shouldIncrease = exercise.loadUnit !== "livre" && shouldProgressFromPrevious(exercise, record.logs);
   const fallbackSet = completed[completed.length - 1];
   const loads = Array.from({ length: Number(exercise.sets) || completed.length }, (_, index) => {
     const source = record.logs[index]?.done ? record.logs[index] : completed[index] ?? fallbackSet;
     const rawLoad = String(source?.load ?? "").trim();
     if (!rawLoad) return exercise.defaultLoad ?? "";
-    const numericLoad = parseLoadValue(rawLoad);
-    if (numericLoad == null || !shouldIncrease) return rawLoad;
-    return formatLoadValue(numericLoad + loadStepForExercise(exercise, numericLoad));
+    return rawLoad;
   });
 
   const summary = loadSummary(loads, exercise);
@@ -1174,10 +1179,9 @@ function buildLoadRecommendation(dateISO, exercise) {
   return {
     loads,
     sourceDate: record.date,
-    progressed: shouldIncrease,
-    message: shouldIncrease
-      ? `Progressão sugerida: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`
-      : `Carga recomendada: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`,
+    progressed: false,
+    source: "previous-session",
+    message: `Carga do último treino preservada: ${summary}. Base: ${shortDateLabel(record.date)}.`,
   };
 }
 
@@ -1188,19 +1192,12 @@ function buildRepRecommendation(dateISO, exercise) {
   const completed = completedExerciseSets(record.logs);
   if (!completed.length) return null;
 
-  const shouldResetRange = shouldProgressFromPrevious(exercise, record.logs) && Number(exercise.minReps) > 0 && Number(exercise.maxReps) > Number(exercise.minReps);
   const fallbackSet = completed[completed.length - 1];
-  let increased = false;
   const reps = Array.from({ length: Number(exercise.sets) || completed.length }, (_, index) => {
     const source = record.logs[index]?.done ? record.logs[index] : completed[index] ?? fallbackSet;
     const previousReps = Number(source?.reps);
     if (!Number.isFinite(previousReps) || previousReps <= 0) return "";
-    if (shouldResetRange) return formatRepValue(exercise.minReps);
-    if (!exercise.maxReps) return formatRepValue(previousReps);
-
-    const nextReps = Math.min(Number(exercise.maxReps), previousReps + repStepForExercise(exercise));
-    if (nextReps > previousReps) increased = true;
-    return formatRepValue(nextReps);
+    return formatRepValue(previousReps);
   });
 
   const summary = repSummary(reps, exercise);
@@ -1210,12 +1207,9 @@ function buildRepRecommendation(dateISO, exercise) {
   return {
     reps,
     sourceDate: record.date,
-    progressed: increased || shouldResetRange,
-    message: shouldResetRange
-      ? `${unitLabel === "tempo" ? "Tempo" : "Reps"} sugeridas: ${summary}. Como você bateu o topo, mire no começo da faixa com a carga nova.`
-      : increased
-        ? `Progressão de ${unitLabel}: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`
-        : `${unitLabel === "tempo" ? "Tempo" : "Reps"} recomendadas: ${summary}. Base: último treino em ${shortDateLabel(record.date)}.`,
+    progressed: false,
+    source: "previous-session",
+    message: `${unitLabel === "tempo" ? "Tempo" : "Reps"} do último treino preservadas: ${summary}. Base: ${shortDateLabel(record.date)}.`,
   };
 }
 
@@ -1840,7 +1834,6 @@ function ensureTimerTicker() {
 function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
-  const suggestion = shouldProgress(exercise, logs);
   const coachRecommendation = activeCoachRecommendationForExercise(state.selectedDate, exercise);
   const detail = exerciseDetailFor(session, exercise);
   const restTimer = getRestTimer(exercise);
@@ -1931,11 +1924,6 @@ function renderExercise(exercise, index, session) {
           `,
         )
         .join("")}
-      ${
-        suggestion
-          ? `<div class="exercise-suggestion"><span>↗</span><span>Você atingiu o topo da faixa em todas as séries. Na próxima sessão, experimente o menor aumento de carga disponível.</span></div>`
-          : ""
-      }
     </article>
   `;
 }
@@ -2005,28 +1993,10 @@ function targetRepsToSeriesValues(target, sets) {
 }
 
 function applyAiRecommendationToNextWorkout(recommendation) {
-  let touched = 0;
-  recommendation.recommendations.forEach((item) => {
-    const nextDate = nextDateWithExercise(recommendation.sourceDate || state.selectedDate, { id: item.exerciseId, name: item.exercise });
-    if (!nextDate) return;
-    const session = getSession(nextDate, true);
-    const plan = getPlanForSession(nextDate, session);
-    const exercise = plan.exercises.find((candidate) => candidate.id === item.exerciseId || normalizeExerciseLookup(candidate.name) === normalizeExerciseLookup(item.exercise));
-    if (!exercise) return;
-    const logs = session.exerciseLogs?.[exercise.id];
-    if (!logs?.length) return;
-    const reps = targetRepsToSeriesValues(item.target_reps, logs.length);
-    logs.forEach((set, index) => {
-      set.load = item.recommended_load || set.load || exercise.defaultLoad || "";
-      set.reps = reps[index] ?? reps[reps.length - 1] ?? set.reps ?? "";
-    });
-    session.loadRecommendations ??= {};
-    session.repRecommendations ??= {};
-    session.loadRecommendations[exercise.id] = { loads: logs.map((set) => set.load), sourceDate: recommendation.sourceDate, progressed: item.action === "increase_load", message: item.reason };
-    session.repRecommendations[exercise.id] = { reps: logs.map((set) => set.reps), sourceDate: recommendation.sourceDate, progressed: ["increase_load", "adjust_reps"].includes(item.action), message: item.reason };
-    touched += 1;
-  });
-  return touched;
+  if (!recommendation) return 0;
+  recommendation.status = "observed";
+  recommendation.observedAt = new Date().toISOString();
+  return recommendation.recommendations?.length ?? 0;
 }
 
 function renderAiRecommendationPanel() {
@@ -2083,17 +2053,17 @@ function renderAiRecommendationPanel() {
       <div class="ai-recommendation-card">
         <div class="ai-recommendation-head">
           <div><h3>${escapeAttribute(recommendation.next_workout_title)}</h3><p>${escapeAttribute(recommendation.muscle_group)}</p></div>
-          <span>${escapeAttribute(recommendation.status === "accepted" ? "Aceita" : "Gerada")}</span>
+          <span>${escapeAttribute(recommendation.status === "accepted" || recommendation.status === "observed" ? "Observação" : "Gerada")}</span>
         </div>
         <p>${escapeAttribute(recommendation.summary)}</p>
+        <p class="ai-observation-note">Essas recomendações ficam como observação em “Coach:” e não alteram automaticamente os campos de carga/reps do próximo treino.</p>
         <div class="ai-exercise-list">${rows}</div>
         ${recommendation.alerts?.length ? `<div class="ai-alerts">${recommendation.alerts.map((alert) => `<span>${escapeAttribute(alert)}</span>`).join("")}</div>` : ""}
         ${recommendation.general_notes?.length ? `<ul class="ai-notes">${recommendation.general_notes.map((note) => `<li>${escapeAttribute(note)}</li>`).join("")}</ul>` : ""}
         <div class="data-actions">
-          <button class="secondary-button" type="button" data-action="accept-ai-recommendation" data-id="${escapeAttribute(recommendation.id)}">Aceitar recomendação</button>
+          <button class="secondary-button" type="button" data-action="accept-ai-recommendation" data-id="${escapeAttribute(recommendation.id)}">Manter como observação</button>
           <button class="secondary-button" type="button" data-action="${editing ? "save-ai-edit" : "edit-ai-recommendation"}" data-id="${escapeAttribute(recommendation.id)}">${editing ? "Salvar edição" : "Editar recomendação"}</button>
           <button class="secondary-button" type="button" data-action="regenerate-ai-recommendation" data-id="${escapeAttribute(recommendation.id)}">Regerar recomendação</button>
-          <button class="primary-button" type="button" data-action="save-ai-next-workout" data-id="${escapeAttribute(recommendation.id)}">Salvar no próximo treino</button>
         </div>
       </div>
     </section>
@@ -3122,10 +3092,11 @@ app.addEventListener("click", async (event) => {
   if (action === "accept-ai-recommendation") {
     const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
     if (recommendation) {
-      recommendation.status = "accepted";
+      recommendation.status = "observed";
+      recommendation.observedAt = new Date().toISOString();
       persist();
       renderToday();
-      showToast("Recomendação aceita.");
+      showToast("Recomendação mantida como observação no Coach.");
     }
     return;
   }
@@ -3164,10 +3135,9 @@ app.addEventListener("click", async (event) => {
   if (action === "save-ai-next-workout") {
     const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
     const touched = recommendation ? applyAiRecommendationToNextWorkout(recommendation) : 0;
-    if (recommendation && touched) recommendation.status = "accepted";
     persist();
     renderToday();
-    showToast(touched ? "Recomendação salva no próximo treino." : "Não encontrei o próximo treino correspondente.");
+    showToast(touched ? "Recomendação mantida apenas como observação no Coach." : "Não encontrei recomendação para manter como observação.");
     return;
   }
 

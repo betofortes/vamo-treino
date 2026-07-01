@@ -669,6 +669,23 @@ h3 {
   min-height: 140px;
 }
 
+.coach-detection {
+  padding: 11px 12px;
+  border: 1px solid rgba(31, 107, 92, 0.14);
+  border-radius: 13px;
+  background: rgba(250, 250, 246, 0.82);
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.coach-detection.has-items {
+  border-color: rgba(31, 107, 92, 0.22);
+  background: rgba(216, 255, 101, 0.22);
+  color: var(--teal);
+}
+
 .coach-link-panel {
   border: 1px solid var(--line);
   border-radius: 13px;
@@ -1245,6 +1262,45 @@ h3 {
 .sync-fields input:focus {
   border-color: var(--teal);
   box-shadow: 0 0 0 3px rgba(31, 107, 92, 0.1);
+}
+
+.sync-setup {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(250, 250, 246, 0.78);
+}
+
+.sync-setup summary {
+  padding: 12px;
+  color: var(--ink);
+  font-size: 0.78rem;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.sync-setup p {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.sync-setup textarea {
+  width: calc(100% - 24px);
+  min-height: 180px;
+  margin: 0 12px 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  font: 700 0.7rem/1.45 ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  resize: vertical;
+}
+
+.sync-setup .secondary-button {
+  margin: 0 12px 12px;
 }
 
 .sync-code-box {

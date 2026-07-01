@@ -1026,11 +1026,36 @@ function compactRepRecommendationText(recommendation, exercise) {
   return compactRepRangeText(exercise);
 }
 
-function compactExerciseRecommendationSummary(exercise, session) {
-  const loadText = compactLoadRecommendationText(session.loadRecommendations?.[exercise.id], exercise);
-  const repText = compactRepRecommendationText(session.repRecommendations?.[exercise.id], exercise);
-  const parts = [loadText, repText].filter(Boolean);
-  return parts.length ? `Recomendado: ${parts.join(" · ")}` : "Recomendado: seguir plano";
+function compactCoachFallbackText(text) {
+  return String(text ?? "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/(?<=[.!?])\s+/)[0]
+    ?.replace(/[.!?]+$/, "")
+    .slice(0, 88);
+}
+
+function compactCoachRecommendationSummary(recommendation) {
+  if (!recommendation) return "Coach: sem recomendação salva";
+
+  const text = String(recommendation.recommendationText ?? "");
+  const explicitWeight = String(recommendation.suggestedWeight ?? "").trim();
+  const explicitReps = String(recommendation.suggestedRepTarget ?? "").trim();
+  const loadMatch = explicitWeight ? null : text.match(/(\d+(?:[,.]\d+)?)\s*(kg|lb)\b/i);
+  const repsMatch = explicitReps ? null : text.match(/(?:meta|reps?|repeti(?:ç|c)(?:ões|oes))[^0-9]{0,28}((?:\d{1,3}\s*\/\s*)+\d{1,3}|\d{1,3}\s*-\s*\d{1,3}|\d{1,3})/i);
+  const parts = [
+    explicitWeight || (loadMatch ? `${loadMatch[1].replace(".", ",")} ${loadMatch[2].toLowerCase()}` : ""),
+    explicitReps || (repsMatch ? `reps ${repsMatch[1].replace(/\s+/g, "")}` : ""),
+  ].filter(Boolean);
+
+  if (parts.length) return `Coach: ${parts.join(" · ")}`;
+
+  const fallback = compactCoachFallbackText(text);
+  return fallback ? `Coach: ${fallback}` : "Coach: recomendação salva";
+}
+
+function compactExerciseRecommendationSummary(exercise, session, coachRecommendation) {
+  return compactCoachRecommendationSummary(coachRecommendation);
 }
 
 function shortDateLabel(dateISO) {
@@ -1548,9 +1573,10 @@ function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
+  const coachRecommendation = activeCoachRecommendationForExercise(state.selectedDate, exercise);
   const detail = exerciseDetailFor(session, exercise);
   const restTimer = getRestTimer(exercise);
-  const recommendationSummary = compactExerciseRecommendationSummary(exercise, session);
+  const recommendationSummary = compactExerciseRecommendationSummary(exercise, session, coachRecommendation);
 
   return `
     <article class="exercise-card ${isComplete ? "is-complete" : ""}" data-exercise-card="${exercise.id}">

@@ -990,6 +990,49 @@ function repSummary(reps, exercise) {
   return `${shown}${suffix} ${exercise.unit === "s" ? "s" : "reps"}`;
 }
 
+function compactRecommendationValues(values, { unique = false, limit = 6 } = {}) {
+  const list = values.map((value) => String(value ?? "").trim()).filter(Boolean);
+  const normalized = unique ? [...new Set(list)] : list;
+  if (!normalized.length) return "";
+  const shown = normalized.slice(0, limit).join("/");
+  return `${shown}${normalized.length > limit ? "..." : ""}`;
+}
+
+function withLoadUnit(value, exercise) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  const unit = exercise.loadUnit === "livre" ? "" : exercise.loadUnit;
+  if (!unit || new RegExp(`\\b${unit}\\b`, "i").test(text)) return text;
+  return `${text} ${unit}`;
+}
+
+function compactLoadRecommendationText(recommendation, exercise) {
+  const recommended = compactRecommendationValues(recommendation?.loads ?? [], { unique: true, limit: 4 });
+  if (recommended) return withLoadUnit(recommended, exercise);
+  return withLoadUnit(exercise.defaultLoad, exercise);
+}
+
+function compactRepRangeText(exercise) {
+  if (exercise.minReps == null && exercise.maxReps == null) return exercise.target ?? "";
+  const label = exercise.unit === "s" ? "tempo" : "reps";
+  const suffix = exercise.unit === "s" ? "s" : "";
+  if (exercise.minReps === exercise.maxReps) return `${label} ${exercise.minReps}${suffix}`;
+  return `${label} ${exercise.minReps}-${exercise.maxReps}${suffix}`;
+}
+
+function compactRepRecommendationText(recommendation, exercise) {
+  const recommended = compactRecommendationValues(recommendation?.reps ?? [], { limit: 6 });
+  if (recommended) return `${exercise.unit === "s" ? "tempo" : "reps"} ${recommended}${exercise.unit === "s" ? "s" : ""}`;
+  return compactRepRangeText(exercise);
+}
+
+function compactExerciseRecommendationSummary(exercise, session) {
+  const loadText = compactLoadRecommendationText(session.loadRecommendations?.[exercise.id], exercise);
+  const repText = compactRepRecommendationText(session.repRecommendations?.[exercise.id], exercise);
+  const parts = [loadText, repText].filter(Boolean);
+  return parts.length ? `Recomendado: ${parts.join(" · ")}` : "Recomendado: seguir plano";
+}
+
 function shortDateLabel(dateISO) {
   const date = parseISO(dateISO);
   return new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "short" }).format(date).replace(".", "");
@@ -1505,9 +1548,9 @@ function renderExercise(exercise, index, session) {
   const logs = session.exerciseLogs[exercise.id];
   const isComplete = logs.every((set) => set.done);
   const suggestion = shouldProgress(exercise, logs);
-  const coachRecommendation = activeCoachRecommendationForExercise(state.selectedDate, exercise);
   const detail = exerciseDetailFor(session, exercise);
   const restTimer = getRestTimer(exercise);
+  const recommendationSummary = compactExerciseRecommendationSummary(exercise, session);
 
   return `
     <article class="exercise-card ${isComplete ? "is-complete" : ""}" data-exercise-card="${exercise.id}">
@@ -1519,12 +1562,7 @@ function renderExercise(exercise, index, session) {
             <span>${exercise.sets} séries · ${rangeLabel(exercise)}</span>
             <span>${exercise.rir}</span>
           </div>
-          <div class="previous-label">${previousSummary(state.selectedDate, exercise)}</div>
-          ${
-            coachRecommendation
-              ? `<div class="coach-recommendation-card"><span>Recomendação anterior</span><p>${escapeAttribute(coachRecommendation.recommendationText)}</p></div>`
-              : ""
-          }
+          <div class="exercise-recommendation-label">${escapeAttribute(recommendationSummary)}</div>
           ${exercise.notes ? `<div class="exercise-plan-note">${escapeAttribute(exercise.notes)}</div>` : ""}
         </div>
       </div>

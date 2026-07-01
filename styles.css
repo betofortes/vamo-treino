@@ -1340,6 +1340,190 @@ h3 {
   color: rgba(255, 255, 255, 0.62);
 }
 
+.training-calendar-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 88% 8%, rgba(216, 255, 101, 0.22), transparent 9rem),
+    var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.training-calendar-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.training-calendar-head h3 {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 1.35rem;
+  text-transform: capitalize;
+}
+
+.training-calendar-head p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.training-calendar-head > span {
+  min-width: 54px;
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--lime);
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.training-calendar-weekdays,
+.training-calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.training-calendar-weekdays {
+  gap: 6px;
+  padding: 0 2px 2px;
+}
+
+.training-calendar-weekdays span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 900;
+  text-align: center;
+}
+
+.training-calendar-grid {
+  gap: 8px 6px;
+}
+
+.training-calendar-empty,
+.training-calendar-day {
+  min-height: 58px;
+}
+
+.training-calendar-day {
+  position: relative;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  padding: 3px 0 5px;
+  border-radius: 16px;
+  color: var(--ink);
+}
+
+.training-calendar-day.is-today {
+  background: rgba(31, 107, 92, 0.07);
+  box-shadow: inset 0 0 0 1px rgba(31, 107, 92, 0.13);
+}
+
+.training-calendar-day.is-future {
+  opacity: 0.48;
+}
+
+.training-calendar-number {
+  font-size: 0.78rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.training-calendar-ring {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 31px;
+  height: 31px;
+  border-radius: 50%;
+  background: #e6e8e1;
+}
+
+.training-calendar-ring::before,
+.training-calendar-ring::after,
+.training-calendar-ring span {
+  content: "";
+  position: absolute;
+  border-radius: 50%;
+}
+
+.training-calendar-ring::before {
+  inset: 4px;
+  background: var(--paper);
+}
+
+.training-calendar-ring::after {
+  inset: 9px;
+  background: #d9dcd4;
+}
+
+.training-calendar-ring span {
+  inset: 13px;
+  background: var(--surface);
+}
+
+.training-calendar-day.is-trained .training-calendar-ring {
+  background: conic-gradient(var(--teal) 0 100%);
+}
+
+.training-calendar-day.is-trained .training-calendar-ring::before {
+  background: conic-gradient(var(--lime) 0 100%);
+}
+
+.training-calendar-day.is-trained .training-calendar-ring::after {
+  background: conic-gradient(var(--coral) 0 100%);
+}
+
+.training-calendar-day.is-trained .training-calendar-ring span {
+  background: var(--teal);
+  box-shadow: inset 0 0 0 4px var(--surface);
+}
+
+.training-calendar-day i {
+  position: absolute;
+  right: 8px;
+  top: 21px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--lime-strong);
+}
+
+.training-calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.training-calendar-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.training-calendar-legend i {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #d9dcd4;
+}
+
+.training-calendar-legend i.is-trained {
+  background: var(--teal);
+  box-shadow: 0 0 0 3px var(--lime), 0 0 0 6px var(--coral);
+}
+
 .history-list {
   display: grid;
   gap: 10px;

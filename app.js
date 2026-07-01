@@ -1,7 +1,10 @@
 const STORAGE_KEY = "vamo-training-v1";
 const SYNC_CONFIG_KEY = "workout-sync-config-v1";
 const SYNC_STATE_KEY = "workout-sync-state-v1";
-const DEFAULT_SYNC_CONFIG = { url: "", anonKey: "" };
+const DEFAULT_SYNC_CONFIG = {
+  url: "https://onpgwlbbzqjmuevkpbrw.supabase.co",
+  anonKey: "sb_publishable_ltaNA7nnVozoSCOcZIjg",
+};
 const AUTO_SYNC_INTERVAL_MS = 45000;
 const SYNC_SCHEMA_SQL = `create table if not exists public.workout_sync (
   sync_id text primary key,
@@ -10,6 +13,9 @@ const SYNC_SCHEMA_SQL = `create table if not exists public.workout_sync (
 );
 
 alter table public.workout_sync enable row level security;
+
+grant usage on schema public to anon;
+grant select, insert, update on public.workout_sync to anon;
 
 drop policy if exists "workout_sync_read" on public.workout_sync;
 drop policy if exists "workout_sync_insert" on public.workout_sync;
@@ -491,8 +497,10 @@ function loadSyncState() {
   try {
     const config = JSON.parse(localStorage.getItem(SYNC_CONFIG_KEY) || "null");
     const saved = JSON.parse(localStorage.getItem(SYNC_STATE_KEY) || "null");
+    const hasBundledConfig = Boolean(DEFAULT_SYNC_CONFIG.url && DEFAULT_SYNC_CONFIG.anonKey);
+    const shouldUseBundledConfig = hasBundledConfig && (!config?.url || config.url !== DEFAULT_SYNC_CONFIG.url);
     return {
-      config: { ...DEFAULT_SYNC_CONFIG, ...(config ?? {}) },
+      config: shouldUseBundledConfig ? { ...DEFAULT_SYNC_CONFIG } : { ...DEFAULT_SYNC_CONFIG, ...(config ?? {}) },
       code: saved?.code ?? "",
       pendingCode: "",
       lastSyncedAt: saved?.lastSyncedAt ?? "",
@@ -594,7 +602,7 @@ async function syncErrorMessage(response, fallback) {
     return "A tabela workout_sync ainda não existe no Supabase. Copie o modelo de tabela no app e rode no SQL Editor.";
   }
   if (response.status === 401 || response.status === 403) {
-    return "O Supabase recusou a conexão. Confira a URL, a chave anon e as permissões da tabela workout_sync.";
+    return "O Supabase recusou a conexão. Confira a URL, a chave pública e as permissões da tabela workout_sync.";
   }
   if (details.includes("row-level security")) {
     return "O Supabase bloqueou por permissão. Rode o modelo de tabela completo para liberar a sincronização criptografada.";
@@ -1846,10 +1854,10 @@ function renderSyncCard() {
   if (!configured) {
     return [
       '<div class="data-card sync-card">',
-      '<div><h3>Configurar sincronização online</h3><p>Use um projeto Supabase e cole aqui a URL e a chave pública anon. O Workout usa um código secreto para criptografar os dados antes de enviar.</p></div>',
+      '<div><h3>Configurar sincronização online</h3><p>Use um projeto Supabase e cole aqui a URL e a chave pública/publishable. O Workout usa um código secreto para criptografar os dados antes de enviar.</p></div>',
       '<div class="sync-fields">',
       '<label><span>URL do projeto Supabase</span><input value="', escapeAttribute(state.sync.config.url), '" placeholder="https://xxxx.supabase.co" data-action="sync-config" data-field="url" /></label>',
-      '<label><span>Chave pública anon</span><input value="', escapeAttribute(state.sync.config.anonKey), '" placeholder="eyJ..." data-action="sync-config" data-field="anonKey" /></label>',
+      '<label><span>Chave pública</span><input value="', escapeAttribute(state.sync.config.anonKey), '" placeholder="sb_publishable_..." data-action="sync-config" data-field="anonKey" /></label>',
       '<button class="secondary-button" type="button" data-action="save-sync-config">Salvar conexão</button>',
       '</div>',
       '<details class="sync-setup"><summary>Preparar tabela no Supabase</summary>',
@@ -2588,11 +2596,11 @@ app.addEventListener("click", async (event) => {
     state.sync.pendingCode = "";
     state.sync.lastSyncedAt = "";
     state.sync.status = "";
-    if (!hadCode) state.sync.config = { url: "", anonKey: "" };
+    if (!hadCode) state.sync.config = { ...DEFAULT_SYNC_CONFIG };
     saveSyncState();
     stopAutoSync();
     renderProgress();
-    showToast(hadCode ? "Sincronização desconectada." : "Conexão removida.");
+    showToast(hadCode ? "Sincronização desconectada." : "Conexão padrão restaurada.");
     return;
   }
 

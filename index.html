@@ -5,6 +5,54 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#10231f" />
     <meta name="description" content="Acompanhamento pessoal de musculação e corrida." />
+    <link rel="manifest" href="./manifest.webmanifest?v=15" />
+    <link rel="icon" href="./icons/icon.svg?v=7" type="image/svg+xml" />
+    <link rel="stylesheet" href="./styles.css?v=15" />
+    <title>Workout</title>
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="#" aria-label="Workout, início">
+          <span class="brand-mark" aria-hidden="true">W</span>
+          <span>Workout</span>
+        </a>
+        <button class="avatar-button" id="profile-button" type="button" aria-label="Perfil de Mateus">MF</button>
+      </header>
+
+      <main id="app" tabindex="-1"></main>
+
+      <nav class="bottom-nav" aria-label="Navegação principal">
+        <button class="nav-item is-active" type="button" data-view="today" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3v3M19 3v3M4 8h16M5 5h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z"/><path d="m9.5 14 1.7 1.7 3.8-4"/></svg>
+          <span>Hoje</span>
+        </button>
+        <button class="nav-item" type="button" data-view="week">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4zM8 3v4M16 3v4M4 9h16"/><path d="M8 13h2M14 13h2M8 16h2M14 16h2"/></svg>
+          <span>Semana</span>
+        </button>
+        <button class="nav-item" type="button" data-view="progress">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V9M10 19V5M16 19v-7M22 19V3"/></svg>
+          <span>Progresso</span>
+        </button>
+        <button class="nav-item" type="button" data-view="plans">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM8 8h8M8 12h8M8 16h5"/></svg>
+          <span>Treinos</span>
+        </button>
+      </nav>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script src="./app.js?v=15" defer></script>
+  </body>
+</html>
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#10231f" />
+    <meta name="description" content="Acompanhamento pessoal de musculação e corrida." />
     <link rel="manifest" href="./manifest.webmanifest?v=14" />
     <link rel="icon" href="./icons/icon.svg?v=7" type="image/svg+xml" />
     <link rel="stylesheet" href="./styles.css?v=14" />

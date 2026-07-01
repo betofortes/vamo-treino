@@ -6,6 +6,12 @@ const DEFAULT_SYNC_CONFIG = {
   anonKey: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9ucGd3bGJienFqbXVldmtwYnJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4NTg3MjAsImV4cCI6MjA5ODQzNDcyMH0.G534vlribv_RITZkeObKwxBHQrE-GcBT0vHNVZFG3WA",
 };
 const AUTO_SYNC_INTERVAL_MS = 45000;
+const AI_SAFETY_LIMITS = {
+  compoundMaxPercent: 0.08,
+  isolationMaxPercent: 0.06,
+  maxAbsoluteKg: 5,
+  maxAbsoluteLb: 10,
+};
 const SYNC_SCHEMA_SQL = `create table if not exists public.workout_sync (
   sync_id text primary key,
   payload jsonb not null,
@@ -259,6 +265,7 @@ const state = {
   store: loadStore(),
   builder: null,
   sheetBuilder: null,
+  aiEditorId: "",
   exerciseTimers: {},
   sync: loadSyncState(),
 };
@@ -347,6 +354,20 @@ function defaultExerciseDetails(plan) {
   );
 }
 
+function defaultUserProfile() {
+  return {
+    name: "Mateus",
+    age: "",
+    weight: "",
+    height: "",
+    level: "intermediário",
+    mainGoal: "hipertrofia com evolução gradual de força e corrida",
+    notes: "Progressão conservadora, priorizando técnica, consistência e segurança.",
+    restrictions: "",
+    experience: "treino regular de musculação",
+  };
+}
+
 function normalizeCoachRecommendation(recommendation) {
   return {
     id: recommendation.id ?? `coach-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -365,7 +386,45 @@ function normalizeCoachRecommendation(recommendation) {
     appliedSessionId: recommendation.appliedSessionId ?? "",
     result: recommendation.result ?? "",
     fulfilled: recommendation.fulfilled ?? null,
+    source: recommendation.source ?? "coach",
+    action: recommendation.action ?? "",
+    reason: recommendation.reason ?? "",
+    safetyNote: recommendation.safetyNote ?? "",
+    targetSets: recommendation.targetSets ?? "",
+    targetRir: recommendation.targetRir ?? "",
   };
+}
+
+function normalizeAiWorkoutRecommendation(recommendation) {
+  return {
+    id: recommendation.id ?? `ai-workout-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    sourceDate: recommendation.sourceDate ?? "",
+    createdAt: recommendation.createdAt ?? new Date().toISOString(),
+    status: recommendation.status ?? "generated",
+    next_workout_title: recommendation.next_workout_title ?? "",
+    muscle_group: recommendation.muscle_group ?? "",
+    summary: recommendation.summary ?? "",
+    recommendations: (recommendation.recommendations ?? []).map((item) => ({
+      exercise: item.exercise ?? "",
+      exerciseId: item.exerciseId ?? "",
+      previous_load: item.previous_load ?? "",
+      recommended_load: item.recommended_load ?? "",
+      target_sets: Number(item.target_sets) || 0,
+      target_reps: item.target_reps ?? "",
+      target_rir: item.target_rir ?? "",
+      action: item.action ?? "maintain_load",
+      reason: item.reason ?? "",
+      safety_note: item.safety_note ?? "",
+    })),
+    general_notes: recommendation.general_notes ?? [],
+    alerts: recommendation.alerts ?? [],
+  };
+}
+
+function ensureAiStore(store) {
+  store.userProfile = { ...defaultUserProfile(), ...(store.userProfile ?? {}) };
+  store.aiWorkoutRecommendations ??= [];
+  store.aiWorkoutRecommendations = store.aiWorkoutRecommendations.map(normalizeAiWorkoutRecommendation);
 }
 
 function ensureCoachStore(store) {
@@ -419,6 +478,8 @@ function defaultStore() {
     activePlan: makeDefaultActivePlan(),
     planArchive: [],
     coachRecommendations: [],
+    aiWorkoutRecommendations: [],
+    userProfile: defaultUserProfile(),
     updatedAt: new Date().toISOString(),
   };
 
@@ -454,6 +515,7 @@ function defaultStore() {
   };
 
   ensureCoachStore(seed);
+  ensureAiStore(seed);
   return seed;
 }
 
@@ -468,6 +530,7 @@ function loadStore() {
       parsed.activePlan.days = (parsed.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
       parsed.planArchive ??= [];
       ensureCoachStore(parsed);
+      ensureAiStore(parsed);
       parsed.updatedAt ??= new Date().toISOString();
       Object.entries(parsed.sessions ?? {}).forEach(([dateISO, session]) => {
         normalizeSession(parsed, dateISO, session);
@@ -636,6 +699,7 @@ function replaceStoreFromSync(remoteStore) {
   remoteStore.activePlan.days = (remoteStore.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
   remoteStore.planArchive ??= [];
   ensureCoachStore(remoteStore);
+  ensureAiStore(remoteStore);
   remoteStore.updatedAt ??= new Date().toISOString();
   Object.entries(remoteStore.sessions ?? {}).forEach(([dateISO, session]) => normalizeSession(remoteStore, dateISO, session));
   state.store = remoteStore;
@@ -1507,6 +1571,209 @@ function applyCoachRecommendationsForSession(dateISO, session) {
   });
 }
 
+function actionLabel(action) {
+  return {
+    increase_load: "aumentar carga",
+    maintain_load: "manter carga",
+    reduce_load: "reduzir carga",
+    change_exercise: "trocar exercício",
+    adjust_reps: "ajustar reps",
+    adjust_volume: "ajustar volume",
+  }[action] ?? "manter";
+}
+
+function targetRepText(exercise) {
+  if (exercise.target && exercise.minReps == null) return exercise.target;
+  const suffix = exercise.unit === "s" ? "s" : "";
+  if (exercise.minReps == null && exercise.maxReps == null) return exercise.target ?? "falha controlada";
+  if (exercise.minReps === exercise.maxReps) return `${exercise.minReps}${suffix}`;
+  return `${exercise.minReps}-${exercise.maxReps}${suffix}`;
+}
+
+function riskTextForExercise(session, exercise) {
+  const detail = session.exerciseDetails?.[exercise.id] ?? {};
+  return [session.notes, detail.notes, detail.substitutionReason].filter(Boolean).join(" ");
+}
+
+function hasSafetyRisk(text) {
+  return /\b(dor|doeu|desconforto|inc[oô]modo|les[aã]o|articular|pontada|fadiga excessiva|muito cansado)\b/i.test(text);
+}
+
+function formatLoadWithUnit(value, exercise) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (exercise.loadUnit === "livre") return text;
+  if (new RegExp(`\\b${exercise.loadUnit}\\b`, "i").test(text)) return text;
+  return `${text} ${exercise.loadUnit}`;
+}
+
+function boundedLoadChange(exercise, currentLoad, direction) {
+  if (currentLoad == null || exercise.loadUnit === "livre") return "";
+  const rawStep = loadStepForExercise(exercise, currentLoad);
+  if (!rawStep) return formatLoadWithUnit(formatLoadValue(currentLoad), exercise);
+  const isCompound = exercise.type === "composto";
+  const maxPercent = isCompound ? AI_SAFETY_LIMITS.compoundMaxPercent : AI_SAFETY_LIMITS.isolationMaxPercent;
+  const maxAbsolute = exercise.loadUnit === "lb" ? AI_SAFETY_LIMITS.maxAbsoluteLb : AI_SAFETY_LIMITS.maxAbsoluteKg;
+  const safeStep = Math.min(rawStep, currentLoad * maxPercent || rawStep, maxAbsolute);
+  const next = Math.max(0, currentLoad + direction * safeStep);
+  return formatLoadWithUnit(formatLoadValue(next), exercise);
+}
+
+function localAiExerciseRecommendation(dateISO, session, plan, exercise) {
+  const logs = session.exerciseLogs?.[exercise.id] ?? [];
+  const completed = completedExerciseSets(logs);
+  const expectedSets = Number(exercise.sets) || logs.length || 0;
+  const riskText = riskTextForExercise(session, exercise);
+  const hasRisk = hasSafetyRisk(riskText);
+  const currentLoads = completed.map((set) => set.load).filter(Boolean);
+  const previousLoad = loadSummary(currentLoads, exercise) || (exercise.loadUnit === "livre" ? "peso corporal" : "não informado");
+  const currentNumericLoad = [...completed].reverse().map((set) => parseLoadValue(set.load)).find((value) => value != null);
+  const completedReps = completed.map((set) => Number(set.reps)).filter((value) => Number.isFinite(value) && value > 0);
+  const allSetsDone = expectedSets > 0 && completed.length >= expectedSets;
+  const topReached = allSetsDone && Number(exercise.maxReps) > 0 && completedReps.length >= expectedSets && completedReps.every((reps) => reps >= Number(exercise.maxReps));
+  const belowMinimum = Number(exercise.minReps) > 0 && completedReps.some((reps) => reps < Number(exercise.minReps));
+  const partialWorkout = completed.length > 0 && expectedSets > 0 && completed.length < expectedSets;
+  const noWorkDone = completed.length === 0;
+
+  let action = "maintain_load";
+  let recommendedLoad = previousLoad;
+  let targetReps = targetRepText(exercise);
+  let reason = "Progressão conservadora: manter a base e buscar execução técnica dentro do RIR alvo.";
+  let safetyNote = "";
+
+  if (hasRisk) {
+    action = currentNumericLoad != null ? "reduce_load" : "change_exercise";
+    recommendedLoad = currentNumericLoad != null ? boundedLoadChange(exercise, currentNumericLoad, -1) : previousLoad;
+    reason = "Há registro de dor, desconforto ou fadiga relevante; a recomendação prioriza segurança.";
+    safetyNote = "Não é diagnóstico médico. Se a dor persistir, reduza a carga e procure orientação profissional.";
+  } else if (noWorkDone) {
+    action = "adjust_volume";
+    recommendedLoad = formatLoadWithUnit(exercise.defaultLoad, exercise) || previousLoad;
+    reason = "O exercício não teve séries concluídas; repetir uma base simples é mais seguro.";
+  } else if (partialWorkout) {
+    action = "maintain_load";
+    reason = "Parte das séries não foi concluída; repetir a carga ajuda a consolidar o volume antes de progredir.";
+  } else if (belowMinimum) {
+    action = currentNumericLoad != null ? "reduce_load" : "maintain_load";
+    recommendedLoad = currentNumericLoad != null ? boundedLoadChange(exercise, currentNumericLoad, -1) : previousLoad;
+    reason = "As repetições ficaram abaixo da faixa mínima; reduzir ou manter evita progressão agressiva.";
+  } else if (topReached && currentNumericLoad != null && exercise.loadUnit !== "livre") {
+    action = "increase_load";
+    recommendedLoad = boundedLoadChange(exercise, currentNumericLoad, 1);
+    reason = "Você fechou o topo da faixa em todas as séries; cabe um aumento pequeno e conservador.";
+  } else if (completedReps.length) {
+    action = "adjust_reps";
+    reason = "O treino ficou dentro da faixa; priorize somar repetições com boa técnica antes de mexer muito na carga.";
+  }
+
+  return {
+    exercise: exercise.name,
+    exerciseId: exercise.id,
+    previous_load: previousLoad,
+    recommended_load: recommendedLoad || previousLoad,
+    target_sets: expectedSets,
+    target_reps: targetReps,
+    target_rir: exercise.rir,
+    action,
+    reason,
+    safety_note: safetyNote,
+  };
+}
+
+function recentHistoryForPlan(dateISO, plan) {
+  const muscles = new Set((plan.exercises ?? []).map((exercise) => exercise.muscle));
+  return Object.entries(state.store.sessions)
+    .filter(([date, session]) => date < dateISO && session.completedAt)
+    .sort(([a], [b]) => b.localeCompare(a))
+    .filter(([date, session]) => {
+      const previousPlan = getPlanForSession(date, session);
+      return previousPlan?.exercises?.some((exercise) => muscles.has(exercise.muscle));
+    })
+    .slice(0, 4);
+}
+
+function validateLocalAiRecommendation(recommendation) {
+  recommendation.recommendations = recommendation.recommendations.filter(
+    (item) => item.exercise && item.recommended_load && item.target_sets && item.target_reps && item.action,
+  );
+  if (!recommendation.recommendations.length) {
+    recommendation.alerts.push("Histórico insuficiente para recomendações detalhadas; mantenha o plano com progressão conservadora.");
+  }
+  return recommendation;
+}
+
+function generateNextWorkoutRecommendation({ userProfile, currentTrainingPlan, currentPeriodizationBlock, recentWorkoutHistory, completedWorkout }) {
+  const { dateISO, session } = completedWorkout;
+  const recommendations = (currentTrainingPlan.exercises ?? []).map((exercise) => localAiExerciseRecommendation(dateISO, session, currentTrainingPlan, exercise));
+  const riskCount = recommendations.filter((item) => item.safety_note).length;
+  const progressCount = recommendations.filter((item) => item.action === "increase_load").length;
+
+  return validateLocalAiRecommendation({
+    id: `local-ai-${dateISO}-${Date.now()}`,
+    sourceDate: dateISO,
+    createdAt: new Date().toISOString(),
+    status: "generated",
+    next_workout_title: currentTrainingPlan.title,
+    muscle_group: [...new Set((currentTrainingPlan.exercises ?? []).map((exercise) => exercise.muscle))].join(" + "),
+    summary: progressCount
+      ? `${progressCount} exercício(s) permitem progressão pequena; o restante deve consolidar técnica e RIR.`
+      : "Recomendação conservadora gerada com base no treino concluído e no histórico recente.",
+    recommendations,
+    general_notes: [
+      `Perfil considerado: ${userProfile.level}, objetivo ${userProfile.mainGoal}.`,
+      `Bloco atual: semana ${currentPeriodizationBlock.week}, ${currentPeriodizationBlock.blockLabel}.`,
+      `Histórico parecido analisado: ${recentWorkoutHistory.length} treino(s).`,
+    ],
+    alerts: riskCount ? ["Há alerta de dor, desconforto ou fadiga em ao menos um exercício."] : [],
+  });
+}
+
+function saveLocalAiRecommendation(dateISO, recommendation) {
+  const normalized = normalizeAiWorkoutRecommendation(recommendation);
+  state.store.aiWorkoutRecommendations = (state.store.aiWorkoutRecommendations ?? []).filter((item) => item.sourceDate !== dateISO || !item.id.startsWith("local-ai-"));
+  state.store.aiWorkoutRecommendations.push(normalized);
+
+  state.store.coachRecommendations = (state.store.coachRecommendations ?? []).filter((item) => item.sourceDate !== dateISO || item.source !== "local-ai");
+  normalized.recommendations.forEach((item) => {
+    state.store.coachRecommendations.push(
+      normalizeCoachRecommendation({
+        id: `local-ai-${dateISO}-${item.exerciseId || normalizeExerciseLookup(item.exercise)}`,
+        exerciseId: item.exerciseId,
+        exerciseName: item.exercise,
+        workoutSessionId: dateISO,
+        sourceDate: dateISO,
+        workoutTitle: normalized.next_workout_title,
+        recommendationText: `${actionLabel(item.action)}: ${item.recommended_load}; reps ${item.target_reps}; RIR ${item.target_rir}. ${item.reason}`,
+        suggestedWeight: item.recommended_load,
+        suggestedRepTarget: item.target_reps,
+        createdAt: normalized.createdAt,
+        status: "pending",
+        source: "local-ai",
+        action: item.action,
+        reason: item.reason,
+        safetyNote: item.safety_note,
+        targetSets: item.target_sets,
+        targetRir: item.target_rir,
+      }),
+    );
+  });
+
+  return normalized;
+}
+
+function generateAndSaveLocalAiRecommendation(dateISO, session) {
+  const plan = getPlanForSession(dateISO, session);
+  if (!plan) return null;
+  const recommendation = generateNextWorkoutRecommendation({
+    userProfile: state.store.userProfile ?? defaultUserProfile(),
+    currentTrainingPlan: plan,
+    currentPeriodizationBlock: getCycleInfo(dateISO),
+    recentWorkoutHistory: recentHistoryForPlan(dateISO, plan),
+    completedWorkout: { dateISO, session },
+  });
+  return saveLocalAiRecommendation(dateISO, recommendation);
+}
+
 function escapeAttribute(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -1712,6 +1979,109 @@ function renderCoachSessionPanel(plan, session) {
   `;
 }
 
+function latestAiWorkoutRecommendation() {
+  return [...(state.store.aiWorkoutRecommendations ?? [])].sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))[0] ?? null;
+}
+
+function targetRepsToSeriesValues(target, sets) {
+  const text = String(target ?? "").trim();
+  const slash = text.match(/(\d+(?:\s*\/\s*\d+)+)/);
+  if (slash) return slash[1].split("/").map((value) => value.trim());
+  const range = text.match(/(\d+)\s*-\s*(\d+)/);
+  const single = text.match(/\d+/);
+  const base = range?.[1] ?? single?.[0] ?? "";
+  return Array.from({ length: sets }, () => base);
+}
+
+function applyAiRecommendationToNextWorkout(recommendation) {
+  let touched = 0;
+  recommendation.recommendations.forEach((item) => {
+    const nextDate = nextDateWithExercise(recommendation.sourceDate || state.selectedDate, { id: item.exerciseId, name: item.exercise });
+    if (!nextDate) return;
+    const session = getSession(nextDate, true);
+    const plan = getPlanForSession(nextDate, session);
+    const exercise = plan.exercises.find((candidate) => candidate.id === item.exerciseId || normalizeExerciseLookup(candidate.name) === normalizeExerciseLookup(item.exercise));
+    if (!exercise) return;
+    const logs = session.exerciseLogs?.[exercise.id];
+    if (!logs?.length) return;
+    const reps = targetRepsToSeriesValues(item.target_reps, logs.length);
+    logs.forEach((set, index) => {
+      set.load = item.recommended_load || set.load || exercise.defaultLoad || "";
+      set.reps = reps[index] ?? reps[reps.length - 1] ?? set.reps ?? "";
+    });
+    session.loadRecommendations ??= {};
+    session.repRecommendations ??= {};
+    session.loadRecommendations[exercise.id] = { loads: logs.map((set) => set.load), sourceDate: recommendation.sourceDate, progressed: item.action === "increase_load", message: item.reason };
+    session.repRecommendations[exercise.id] = { reps: logs.map((set) => set.reps), sourceDate: recommendation.sourceDate, progressed: ["increase_load", "adjust_reps"].includes(item.action), message: item.reason };
+    touched += 1;
+  });
+  return touched;
+}
+
+function renderAiRecommendationPanel() {
+  const recommendation = latestAiWorkoutRecommendation();
+  if (!recommendation) {
+    return `
+      <section class="section ai-recommendation-section">
+        <div class="section-heading"><div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div></div>
+        <div class="ai-recommendation-card">
+          <p>Finalize um treino para o Workout gerar automaticamente recomendações conservadoras, sem usar API paga.</p>
+        </div>
+      </section>
+    `;
+  }
+
+  const editing = state.aiEditorId === recommendation.id;
+  const rows = recommendation.recommendations
+    .map((item, index) => `
+      <article class="ai-exercise-card">
+        <strong>${escapeAttribute(item.exercise)}</strong>
+        ${
+          editing
+            ? `<div class="ai-edit-grid">
+                <label><span>Carga</span><input value="${escapeAttribute(item.recommended_load)}" data-action="ai-rec-edit" data-id="${escapeAttribute(recommendation.id)}" data-index="${index}" data-field="recommended_load" /></label>
+                <label><span>Séries</span><input type="number" min="1" max="20" value="${escapeAttribute(item.target_sets)}" data-action="ai-rec-edit" data-id="${escapeAttribute(recommendation.id)}" data-index="${index}" data-field="target_sets" /></label>
+                <label><span>Reps</span><input value="${escapeAttribute(item.target_reps)}" data-action="ai-rec-edit" data-id="${escapeAttribute(recommendation.id)}" data-index="${index}" data-field="target_reps" /></label>
+                <label><span>RIR</span><input value="${escapeAttribute(item.target_rir)}" data-action="ai-rec-edit" data-id="${escapeAttribute(recommendation.id)}" data-index="${index}" data-field="target_rir" /></label>
+              </div>
+              <label class="ai-reason-edit"><span>Justificativa</span><textarea data-action="ai-rec-edit" data-id="${escapeAttribute(recommendation.id)}" data-index="${index}" data-field="reason">${escapeAttribute(item.reason)}</textarea></label>`
+            : `<div class="ai-exercise-grid">
+                <span><small>Anterior</small>${escapeAttribute(item.previous_load)}</span>
+                <span><small>Recomendada</small>${escapeAttribute(item.recommended_load)}</span>
+                <span><small>Séries</small>${escapeAttribute(item.target_sets)}</span>
+                <span><small>Reps</small>${escapeAttribute(item.target_reps)}</span>
+                <span><small>RIR</small>${escapeAttribute(item.target_rir)}</span>
+              </div>
+              <p><strong>${escapeAttribute(actionLabel(item.action))}.</strong> ${escapeAttribute(item.reason)}</p>
+              ${item.safety_note ? `<em>${escapeAttribute(item.safety_note)}</em>` : ""}`
+        }
+      </article>
+    `)
+    .join("");
+
+  return `
+    <section class="section ai-recommendation-section">
+      <div class="section-heading"><div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div></div>
+      <div class="ai-recommendation-card">
+        <div class="ai-recommendation-head">
+          <div><h3>${escapeAttribute(recommendation.next_workout_title)}</h3><p>${escapeAttribute(recommendation.muscle_group)}</p></div>
+          <span>${escapeAttribute(recommendation.status === "accepted" ? "Aceita" : "Gerada")}</span>
+        </div>
+        <p>${escapeAttribute(recommendation.summary)}</p>
+        <div class="ai-exercise-list">${rows}</div>
+        ${recommendation.alerts?.length ? `<div class="ai-alerts">${recommendation.alerts.map((alert) => `<span>${escapeAttribute(alert)}</span>`).join("")}</div>` : ""}
+        ${recommendation.general_notes?.length ? `<ul class="ai-notes">${recommendation.general_notes.map((note) => `<li>${escapeAttribute(note)}</li>`).join("")}</ul>` : ""}
+        <div class="data-actions">
+          <button class="secondary-button" type="button" data-action="accept-ai-recommendation" data-id="${escapeAttribute(recommendation.id)}">Aceitar recomendação</button>
+          <button class="secondary-button" type="button" data-action="${editing ? "save-ai-edit" : "edit-ai-recommendation"}" data-id="${escapeAttribute(recommendation.id)}">${editing ? "Salvar edição" : "Editar recomendação"}</button>
+          <button class="secondary-button" type="button" data-action="regenerate-ai-recommendation" data-id="${escapeAttribute(recommendation.id)}">Regerar recomendação</button>
+          <button class="primary-button" type="button" data-action="save-ai-next-workout" data-id="${escapeAttribute(recommendation.id)}">Salvar no próximo treino</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderToday() {
   const plan = getPlanForDate();
   if (!plan) {
@@ -1836,6 +2206,7 @@ function renderToday() {
         <textarea id="session-notes" placeholder="Como foi o treino? Trocou algum exercício?" data-action="notes">${escapeAttribute(session.notes)}</textarea>
       </div>
       ${renderCoachSessionPanel(plan, session)}
+      ${renderAiRecommendationPanel()}
       <button class="primary-button ${session.completedAt ? "is-saved" : ""}" type="button" data-action="finish-workout">
         ${session.completedAt ? `${checkIcon()} Treino salvo` : "Concluir e salvar treino"}
       </button>
@@ -2484,6 +2855,15 @@ app.addEventListener("input", (event) => {
   }
   if (action === "catalog-exercise") return;
 
+  if (action === "ai-rec-edit") {
+    const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
+    const item = recommendation?.recommendations?.[Number(target.dataset.index)];
+    if (!item) return;
+    item[target.dataset.field] = target.dataset.field === "target_sets" ? Number(target.value) || 1 : target.value;
+    persist();
+    return;
+  }
+
   const session = getSession();
 
   if (action === "set-input") {
@@ -2560,6 +2940,7 @@ app.addEventListener("change", (event) => {
         imported.activePlan.days = (imported.activePlan.days ?? []).map((plan) => normalizePlanDay(plan, plan.weekday));
         imported.planArchive ??= [];
         ensureCoachStore(imported);
+        ensureAiStore(imported);
         Object.entries(imported.sessions).forEach(([dateISO, session]) => {
           normalizeSession(imported, dateISO, session);
         });
@@ -2715,6 +3096,58 @@ app.addEventListener("click", async (event) => {
     return;
   }
 
+  if (action === "accept-ai-recommendation") {
+    const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
+    if (recommendation) {
+      recommendation.status = "accepted";
+      persist();
+      renderToday();
+      showToast("Recomendação aceita.");
+    }
+    return;
+  }
+
+  if (action === "edit-ai-recommendation") {
+    state.aiEditorId = target.dataset.id;
+    renderToday();
+    return;
+  }
+
+  if (action === "save-ai-edit") {
+    const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
+    if (recommendation) saveLocalAiRecommendation(recommendation.sourceDate, recommendation);
+    state.aiEditorId = "";
+    persist();
+    renderToday();
+    showToast("Edição salva.");
+    return;
+  }
+
+  if (action === "regenerate-ai-recommendation") {
+    const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
+    const sourceDate = recommendation?.sourceDate ?? state.selectedDate;
+    const session = state.store.sessions[sourceDate];
+    if (session?.completedAt) {
+      generateAndSaveLocalAiRecommendation(sourceDate, session);
+      persist();
+      renderToday();
+      showToast("Recomendação regenerada.");
+    } else {
+      showToast("Conclua o treino antes de regerar.");
+    }
+    return;
+  }
+
+  if (action === "save-ai-next-workout") {
+    const recommendation = state.store.aiWorkoutRecommendations?.find((item) => item.id === target.dataset.id);
+    const touched = recommendation ? applyAiRecommendationToNextWorkout(recommendation) : 0;
+    if (recommendation && touched) recommendation.status = "accepted";
+    persist();
+    renderToday();
+    showToast(touched ? "Recomendação salva no próximo treino." : "Não encontrei o próximo treino correspondente.");
+    return;
+  }
+
   if (action === "start-general-timer" || action === "pause-general-timer" || action === "reset-general-timer") {
     const session = getSession();
     if (action === "start-general-timer" && !session.timer.running) {
@@ -2779,9 +3212,10 @@ app.addEventListener("click", async (event) => {
     session.totalDuration = Math.round(generalElapsed(session));
     session.completedAt = new Date().toISOString();
     applyCoachRecommendationsForSession(state.selectedDate, session);
+    const generatedRecommendation = generateAndSaveLocalAiRecommendation(state.selectedDate, session);
     persist();
     renderToday();
-    showToast("Treino salvo no seu histórico.");
+    showToast(generatedRecommendation ? "Treino salvo e Coach local gerou recomendações." : "Treino salvo no seu histórico.");
   }
 
   if (action === "export-data") {

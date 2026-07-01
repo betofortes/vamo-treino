@@ -306,6 +306,43 @@ h3 {
   font-size: 0.8rem;
 }
 
+.section-helper {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.collapsible-heading {
+  align-items: center;
+}
+
+.collapse-toggle {
+  display: inline-grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  border: 1px solid rgba(31, 107, 92, 0.18);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--teal);
+  box-shadow: var(--shadow-soft);
+  cursor: pointer;
+}
+
+.collapse-toggle span {
+  font-size: 1.15rem;
+  font-weight: 950;
+  line-height: 1;
+}
+
+.collapse-toggle:focus-visible,
+.collapsed-panel-hint:focus-visible {
+  outline: 3px solid rgba(31, 107, 92, 0.22);
+  outline-offset: 2px;
+}
+
 .text-button {
   padding: 7px 0;
   border: 0;
@@ -649,8 +686,32 @@ h3 {
   background: var(--surface);
 }
 
+.collapsed-panel-hint {
+  width: 100%;
+  padding: 13px 15px;
+  border: 1px dashed rgba(31, 107, 92, 0.26);
+  border-radius: 16px;
+  background: rgba(31, 107, 92, 0.06);
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+
+.collapsible-content {
+  display: grid;
+  gap: 12px;
+}
+
 .coach-card + .coach-card {
   margin-top: 12px;
+}
+
+.collapsible-content .coach-card + .coach-card {
+  margin-top: 0;
 }
 
 .coach-card h3 {
@@ -1275,11 +1336,35 @@ h3 {
   gap: 10px;
 }
 
+.history-list.is-scrollable {
+  max-height: calc((76px * 7) + (10px * 6));
+  overflow-y: auto;
+  padding-right: 7px;
+  overscroll-behavior: contain;
+  scrollbar-color: rgba(31, 107, 92, 0.45) rgba(31, 107, 92, 0.08);
+  scrollbar-width: thin;
+}
+
+.history-list.is-scrollable::-webkit-scrollbar {
+  width: 8px;
+}
+
+.history-list.is-scrollable::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(31, 107, 92, 0.08);
+}
+
+.history-list.is-scrollable::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(31, 107, 92, 0.45);
+}
+
 .history-item {
   display: grid;
   grid-template-columns: 46px 1fr auto;
   align-items: center;
   gap: 12px;
+  min-height: 76px;
   padding: 14px;
   border: 1px solid var(--line);
   border-radius: 16px;

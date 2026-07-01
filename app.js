@@ -266,6 +266,7 @@ const state = {
   builder: null,
   sheetBuilder: null,
   aiEditorId: "",
+  coachPanelOpen: false,
   exerciseTimers: {},
   sync: loadSyncState(),
 };
@@ -1943,38 +1944,48 @@ function renderCoachSessionPanel(plan, session) {
   const summary = session.chatgptSummary ?? "";
   const parsed = parseCoachRecommendationsFromText(session.coachResponseText, plan);
   const detectedExercises = parsed.items.map((item) => item.exercise.name);
+  const isOpen = state.coachPanelOpen;
   const detectionText = session.coachResponseText?.trim()
     ? detectedExercises.length
       ? `${detectedExercises.length} recomendação(ões) detectada(s): ${detectedExercises.join(", ")}.`
       : "Ainda não encontrei nomes de exercícios no texto. Peça ao ChatGPT para usar os nomes exatamente como aparecem no resumo."
     : "Depois de colar a resposta, o app mostrará aqui quais exercícios foram identificados.";
   return `
-    <section class="section coach-session-section">
-      <div class="section-heading">
+    <section class="section coach-session-section ${isOpen ? "is-open" : "is-collapsed"}">
+      <div class="section-heading collapsible-heading">
         <div><p class="eyebrow">Coach / ChatGPT</p><h2>Acompanhamento inteligente</h2></div>
+        <button class="collapse-toggle" type="button" data-action="toggle-coach-panel" aria-expanded="${isOpen}" aria-label="${isOpen ? "Minimizar acompanhamento inteligente" : "Mostrar acompanhamento inteligente"}">
+          <span>${isOpen ? "↑" : "↓"}</span>
+        </button>
       </div>
-      <div class="coach-card">
-        <div>
-          <h3>Resumo para enviar ao ChatGPT</h3>
-          <p>Gere um texto padronizado com cargas, repetições, cardio, substituições e observações do treino.</p>
-        </div>
-        <div class="data-actions">
-          <button class="secondary-button" type="button" data-action="generate-chatgpt-summary">Gerar resumo</button>
-          <button class="secondary-button" type="button" data-action="copy-chatgpt-summary">Copiar resumo</button>
-        </div>
-        <textarea class="coach-output" readonly placeholder="O resumo aparecerá aqui depois de gerar.">${escapeAttribute(summary)}</textarea>
-      </div>
-      <div class="coach-card">
-        <div>
-          <h3>Colar resposta do ChatGPT</h3>
-          <p>Cole a resposta completa em um único campo. O Workout separa automaticamente as recomendações por exercício.</p>
-        </div>
-        <textarea class="coach-output" data-action="coach-response" placeholder="Cole aqui a resposta completa do ChatGPT. Ex.: Supino reto com barra: manter 40 kg e buscar 8/8/8/8...">${escapeAttribute(session.coachResponseText)}</textarea>
-        <div class="coach-detection ${detectedExercises.length ? "has-items" : ""}" data-coach-detection>
-          <span>${escapeAttribute(detectionText)}</span>
-        </div>
-        <button class="primary-button" type="button" data-action="save-coach-recommendations">Salvar recomendações do Coach</button>
-      </div>
+      ${
+        isOpen
+          ? `<div class="collapsible-content">
+              <div class="coach-card">
+                <div>
+                  <h3>Resumo para enviar ao ChatGPT</h3>
+                  <p>Gere um texto padronizado com cargas, repetições, cardio, substituições e observações do treino.</p>
+                </div>
+                <div class="data-actions">
+                  <button class="secondary-button" type="button" data-action="generate-chatgpt-summary">Gerar resumo</button>
+                  <button class="secondary-button" type="button" data-action="copy-chatgpt-summary">Copiar resumo</button>
+                </div>
+                <textarea class="coach-output" readonly placeholder="O resumo aparecerá aqui depois de gerar.">${escapeAttribute(summary)}</textarea>
+              </div>
+              <div class="coach-card">
+                <div>
+                  <h3>Colar resposta do ChatGPT</h3>
+                  <p>Cole a resposta completa em um único campo. O Workout separa automaticamente as recomendações por exercício.</p>
+                </div>
+                <textarea class="coach-output" data-action="coach-response" placeholder="Cole aqui a resposta completa do ChatGPT. Ex.: Supino reto com barra: manter 40 kg e buscar 8/8/8/8...">${escapeAttribute(session.coachResponseText)}</textarea>
+                <div class="coach-detection ${detectedExercises.length ? "has-items" : ""}" data-coach-detection>
+                  <span>${escapeAttribute(detectionText)}</span>
+                </div>
+                <button class="primary-button" type="button" data-action="save-coach-recommendations">Salvar recomendações do Coach</button>
+              </div>
+            </div>`
+          : `<button class="collapsed-panel-hint" type="button" data-action="toggle-coach-panel">Toque na seta para gerar resumo, colar resposta ou salvar recomendações.</button>`
+      }
     </section>
   `;
 }
@@ -2415,12 +2426,11 @@ function renderProgress() {
       <article class="metric-card"><span class="metric-label">Melhor corrida</span><div class="metric-value">${bestDistance || "—"}</div><span class="metric-caption">${bestDistance ? `metros · ${bestPercent}% da meta` : "sem registro"}</span></article>
     </section>
     <section class="section">
-      <div class="section-heading"><div><p class="eyebrow">Atividade</p><h2>Histórico recente</h2></div></div>
-      <div class="history-list">
+      <div class="section-heading"><div><p class="eyebrow">Atividade</p><h2>Histórico recente</h2>${sessions.length > 7 ? `<span class="section-helper">Mostrando 7 treinos por vez. Role para ver os anteriores.</span>` : ""}</div></div>
+      <div class="history-list ${sessions.length > 7 ? "is-scrollable" : ""}">
         ${
           sessions.length
             ? sessions
-                .slice(0, 10)
                 .map(([dateISO, session]) => {
                   const plan = getPlanForSession(dateISO, session);
                   const date = formatShortDate(dateISO);
@@ -3053,6 +3063,12 @@ app.addEventListener("click", async (event) => {
     stopAutoSync();
     renderProgress();
     showToast(hadCode ? "Sincronização desconectada." : "Conexão padrão restaurada.");
+    return;
+  }
+
+  if (action === "toggle-coach-panel") {
+    state.coachPanelOpen = !state.coachPanelOpen;
+    renderToday();
     return;
   }
 

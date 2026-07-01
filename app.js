@@ -2021,11 +2021,18 @@ function applyAiRecommendationToNextWorkout(recommendation) {
 function renderAiRecommendationPanel() {
   const recommendation = latestAiWorkoutRecommendation();
   if (!recommendation) {
+    const session = getSession(state.selectedDate, false);
+    const canGenerateNow = Boolean(session?.completedAt);
     return `
       <section class="section ai-recommendation-section">
         <div class="section-heading"><div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div></div>
         <div class="ai-recommendation-card">
-          <p>Finalize um treino para o Workout gerar automaticamente recomendações conservadoras, sem usar API paga.</p>
+          <p>${canGenerateNow ? "Este treino já foi salvo. Você pode gerar agora a recomendação conservadora para o próximo treino, sem usar API paga." : "Finalize um treino para o Workout gerar automaticamente recomendações conservadoras, sem usar API paga."}</p>
+          ${
+            canGenerateNow
+              ? `<div class="data-actions"><button class="primary-button" type="button" data-action="regenerate-ai-recommendation">Gerar recomendação agora</button></div>`
+              : ""
+          }
         </div>
       </section>
     `;

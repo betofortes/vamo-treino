@@ -14,7 +14,7 @@ Na seção **Corrida**, a velocidade da esteira pode ser registrada em km/h. O �
 - Cronômetro geral persistente e cronômetros independentes de intervalo para cada exercício.
 - Registro de alongamento/mobilidade, tempo total, distância e velocidade da esteira no histórico.
 - Sugestão gratuita de cargas e repetições nos treinos seguintes com base no último registro do exercício.
-- Fluxo gratuito de Coach: gerar resumo do treino para ChatGPT, colar a resposta, salvar recomendações por exercício e exibir no próximo treino.
+- Fluxo gratuito de Coach: gerar resumo do treino para ChatGPT, colar a resposta completa em um único campo, separar recomendações automaticamente por exercício e exibir no próximo treino.
 - Transferência gratuita dos dados entre navegadores por exportação e importação de backup.
 - Sincronização gratuita entre navegadores usando um projeto Supabase gratuito e um código secreto criado no app.
 
@@ -36,7 +36,7 @@ Os registros ficam no armazenamento local do navegador. A tela Progresso permite
 
 Como navegadores diferentes não compartilham o mesmo armazenamento local, para trocar de navegador exporte os dados no navegador de origem e importe o arquivo no navegador de destino.
 
-Para sincronização automática entre navegadores, a tela Progresso também aceita uma conexão gratuita com Supabase. O app cria um código secreto, criptografa os dados no próprio navegador e envia apenas o pacote criptografado. No outro navegador, use a mesma conexão e cole o mesmo código para receber os dados.
+Para sincronização automática entre navegadores, a tela Progresso também aceita uma conexão com Supabase. O app mostra o modelo da tabela, cria um código secreto, criptografa os dados no próprio navegador e envia apenas o pacote criptografado. No outro navegador, use a mesma conexão e cole o mesmo código para receber os dados. Depois disso, o app sincroniza ao abrir, ao voltar para a aba e após salvar alterações.
 
 ## Publicação gratuita
 

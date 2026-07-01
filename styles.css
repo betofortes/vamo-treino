@@ -755,6 +755,151 @@ h3 {
   font-weight: 700;
 }
 
+.ai-recommendation-card,
+.ai-exercise-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+
+.ai-recommendation-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+}
+
+.ai-recommendation-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.ai-recommendation-head h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.ai-recommendation-head p,
+.ai-recommendation-card > p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.ai-recommendation-head span {
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: rgba(216, 255, 101, 0.45);
+  color: var(--teal);
+  font-size: 0.68rem;
+  font-weight: 850;
+}
+
+.ai-exercise-list {
+  display: grid;
+  gap: 10px;
+}
+
+.ai-exercise-card {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface-strong);
+}
+
+.ai-exercise-card > strong {
+  color: var(--ink);
+  font-size: 0.86rem;
+}
+
+.ai-exercise-grid,
+.ai-edit-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 8px;
+}
+
+.ai-exercise-grid span,
+.ai-edit-grid label,
+.ai-reason-edit {
+  display: grid;
+  gap: 4px;
+}
+
+.ai-exercise-grid small,
+.ai-edit-grid span,
+.ai-reason-edit span {
+  color: var(--muted);
+  font-size: 0.62rem;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.ai-exercise-grid span {
+  padding: 8px;
+  border-radius: 10px;
+  background: #fffef8;
+  color: var(--ink);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.ai-exercise-card p,
+.ai-exercise-card em,
+.ai-notes,
+.ai-alerts {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+
+.ai-exercise-card em {
+  color: #8f4f00;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.ai-edit-grid input,
+.ai-reason-edit textarea {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: #fffef8;
+  color: var(--ink);
+  font: inherit;
+}
+
+.ai-edit-grid input {
+  min-height: 38px;
+  padding: 8px 10px;
+}
+
+.ai-reason-edit textarea {
+  min-height: 70px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.ai-alerts {
+  display: grid;
+  gap: 6px;
+}
+
+.ai-alerts span {
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: rgba(255, 197, 72, 0.2);
+  color: #7a4a00;
+  font-weight: 800;
+}
+
+.ai-notes {
+  padding-left: 18px;
+}
+
 .cardio-card {
   overflow: hidden;
   padding: 20px;

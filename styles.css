@@ -444,11 +444,11 @@ h3 {
   font-size: 0.75rem;
 }
 
-.previous-label {
+.exercise-recommendation-label {
   margin-top: 7px;
   color: var(--teal);
   font-size: 0.73rem;
-  font-weight: 700;
+  font-weight: 800;
 }
 
 .series-grid {

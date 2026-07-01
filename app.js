@@ -266,6 +266,7 @@ const state = {
   builder: null,
   sheetBuilder: null,
   aiEditorId: "",
+  aiPanelOpen: false,
   coachPanelOpen: false,
   exerciseTimers: {},
   sync: loadSyncState(),
@@ -2001,12 +2002,31 @@ function applyAiRecommendationToNextWorkout(recommendation) {
 
 function renderAiRecommendationPanel() {
   const recommendation = latestAiWorkoutRecommendation();
+  const isOpen = state.aiPanelOpen;
+  const heading = `
+    <div class="section-heading collapsible-heading">
+      <div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div>
+      <button class="collapse-toggle" type="button" data-action="toggle-ai-panel" aria-expanded="${isOpen}" aria-label="${isOpen ? "Minimizar recomendações para o próximo treino" : "Mostrar recomendações para o próximo treino"}">
+        <span>${isOpen ? "↑" : "↓"}</span>
+      </button>
+    </div>
+  `;
+
+  if (!isOpen) {
+    return `
+      <section class="section ai-recommendation-section is-collapsed">
+        ${heading}
+        <button class="collapsed-panel-hint" type="button" data-action="toggle-ai-panel">Toque na seta para ver, gerar ou editar as recomendações quando precisar.</button>
+      </section>
+    `;
+  }
+
   if (!recommendation) {
     const session = getSession(state.selectedDate, false);
     const canGenerateNow = Boolean(session?.completedAt);
     return `
-      <section class="section ai-recommendation-section">
-        <div class="section-heading"><div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div></div>
+      <section class="section ai-recommendation-section is-open">
+        ${heading}
         <div class="ai-recommendation-card">
           <p>${canGenerateNow ? "Este treino já foi salvo. Você pode gerar agora a recomendação conservadora para o próximo treino, sem usar API paga." : "Finalize um treino para o Workout gerar automaticamente recomendações conservadoras, sem usar API paga."}</p>
           ${
@@ -2048,8 +2068,8 @@ function renderAiRecommendationPanel() {
     .join("");
 
   return `
-    <section class="section ai-recommendation-section">
-      <div class="section-heading"><div><p class="eyebrow">IA local gratuita</p><h2>Recomendações para o próximo treino</h2></div></div>
+    <section class="section ai-recommendation-section is-open">
+      ${heading}
       <div class="ai-recommendation-card">
         <div class="ai-recommendation-head">
           <div><h3>${escapeAttribute(recommendation.next_workout_title)}</h3><p>${escapeAttribute(recommendation.muscle_group)}</p></div>
@@ -3038,6 +3058,12 @@ app.addEventListener("click", async (event) => {
 
   if (action === "toggle-coach-panel") {
     state.coachPanelOpen = !state.coachPanelOpen;
+    renderToday();
+    return;
+  }
+
+  if (action === "toggle-ai-panel") {
+    state.aiPanelOpen = !state.aiPanelOpen;
     renderToday();
     return;
   }

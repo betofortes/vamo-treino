@@ -2287,6 +2287,72 @@ function calculateStreak(sessions) {
   return streak;
 }
 
+function renderTrainingCalendar(sessions) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const firstDay = new Date(year, month, 1, 12);
+  const daysInMonth = new Date(year, month + 1, 0, 12).getDate();
+  const monthPrefix = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const completedDates = new Set(sessions.map(([dateISO]) => dateISO).filter((dateISO) => dateISO.startsWith(monthPrefix)));
+  const trainedDays = completedDates.size;
+  const startOffset = (firstDay.getDay() + 6) % 7;
+  const monthName = new Intl.DateTimeFormat("pt-BR", { month: "long" }).format(firstDay);
+  const monthLabel = new Intl.DateTimeFormat("pt-BR", { month: "long", year: "numeric" }).format(firstDay);
+  const todayISO = localISO(today);
+  const weekdayLabels = ["S", "T", "Q", "Q", "S", "S", "D"];
+  const cells = [
+    ...Array.from({ length: startOffset }, () => `<span class="training-calendar-empty" aria-hidden="true"></span>`),
+    ...Array.from({ length: daysInMonth }, (_, index) => {
+      const day = index + 1;
+      const dateISO = `${monthPrefix}-${String(day).padStart(2, "0")}`;
+      const isTrained = completedDates.has(dateISO);
+      const isTodayDate = dateISO === todayISO;
+      const isFuture = parseISO(dateISO) > parseISO(todayISO);
+      const classes = ["training-calendar-day", isTrained ? "is-trained" : "", isTodayDate ? "is-today" : "", isFuture ? "is-future" : ""].filter(Boolean).join(" ");
+      const status = isTrained ? "treino registrado" : isFuture ? "ainda não chegou" : "sem treino registrado";
+      return `
+        <div class="${classes}" aria-label="${day} de ${escapeAttribute(monthName)}: ${status}">
+          <span class="training-calendar-number">${day}</span>
+          <span class="training-calendar-ring" aria-hidden="true"><span></span></span>
+          ${isTrained ? `<i aria-hidden="true"></i>` : ""}
+        </div>
+      `;
+    }),
+  ].join("");
+
+  return `
+    <section class="section training-calendar-section">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Consistência mensal</p>
+          <h2>Calendário do mês</h2>
+          <span class="section-helper">Mostrando apenas ${escapeAttribute(monthLabel)}.</span>
+        </div>
+      </div>
+      <div class="training-calendar-card">
+        <div class="training-calendar-head">
+          <div>
+            <h3>${escapeAttribute(monthName)}</h3>
+            <p>${trainedDays} ${trainedDays === 1 ? "dia treinado" : "dias treinados"} neste mês</p>
+          </div>
+          <span>${trainedDays}/${daysInMonth}</span>
+        </div>
+        <div class="training-calendar-weekdays" aria-hidden="true">
+          ${weekdayLabels.map((label) => `<span>${label}</span>`).join("")}
+        </div>
+        <div class="training-calendar-grid">
+          ${cells}
+        </div>
+        <div class="training-calendar-legend">
+          <span><i class="is-trained"></i> Dia treinado</span>
+          <span><i></i> Sem registro</span>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderSyncCard() {
   const configured = syncConfigured();
   const connected = configured && state.sync.code;
@@ -2415,6 +2481,7 @@ function renderProgress() {
       <article class="metric-card"><span class="metric-label">Séries feitas</span><div class="metric-value">${totalSetsDone}</div><span class="metric-caption">séries concluídas</span></article>
       <article class="metric-card"><span class="metric-label">Melhor corrida</span><div class="metric-value">${bestDistance || "—"}</div><span class="metric-caption">${bestDistance ? `metros · ${bestPercent}% da meta` : "sem registro"}</span></article>
     </section>
+    ${renderTrainingCalendar(sessions)}
     <section class="section">
       <div class="section-heading"><div><p class="eyebrow">Atividade</p><h2>Histórico recente</h2>${sessions.length > 7 ? `<span class="section-helper">Mostrando 7 treinos por vez. Role para ver os anteriores.</span>` : ""}</div></div>
       <div class="history-list ${sessions.length > 7 ? "is-scrollable" : ""}">

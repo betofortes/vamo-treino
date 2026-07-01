@@ -1972,7 +1972,6 @@ function renderProgress() {
       <article class="metric-card"><span class="metric-label">Séries feitas</span><div class="metric-value">${totalSetsDone}</div><span class="metric-caption">séries concluídas</span></article>
       <article class="metric-card"><span class="metric-label">Melhor corrida</span><div class="metric-value">${bestDistance || "—"}</div><span class="metric-caption">${bestDistance ? `metros · ${bestPercent}% da meta` : "sem registro"}</span></article>
     </section>
-    ${renderCoachRecommendationsSection()}
     <section class="section">
       <div class="section-heading"><div><p class="eyebrow">Atividade</p><h2>Histórico recente</h2></div></div>
       <div class="history-list">

@@ -36,7 +36,7 @@ Os registros ficam no armazenamento local do navegador. A tela Progresso permite
 
 Como navegadores diferentes não compartilham o mesmo armazenamento local, para trocar de navegador exporte os dados no navegador de origem e importe o arquivo no navegador de destino.
 
-Para sincronização automática entre navegadores, a tela Progresso também aceita uma conexão com Supabase. O app mostra o modelo da tabela, cria um código secreto, criptografa os dados no próprio navegador e envia apenas o pacote criptografado. No outro navegador, use a mesma conexão e cole o mesmo código para receber os dados. Depois disso, o app sincroniza ao abrir, ao voltar para a aba e após salvar alterações.
+Para sincronização automática entre navegadores, o app já vem configurado com o projeto Supabase do Workout. Ele cria um código secreto, criptografa os dados no próprio navegador e envia apenas o pacote criptografado. No outro navegador, use o mesmo código para receber os dados. Depois disso, o app sincroniza ao abrir, ao voltar para a aba e após salvar alterações.
 
 ## Publicação gratuita
 

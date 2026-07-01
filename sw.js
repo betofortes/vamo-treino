@@ -1,10 +1,10 @@
-const CACHE_NAME = "workout-shell-v13";
+const CACHE_NAME = "workout-shell-v14";
 const APP_SHELL = [
   "./",
   "./index.html",
-  "./styles.css?v=13",
-  "./app.js?v=13",
-  "./manifest.webmanifest?v=13",
+  "./styles.css?v=14",
+  "./app.js?v=14",
+  "./manifest.webmanifest?v=14",
   "./icons/icon.svg?v=7",
 ];
 
